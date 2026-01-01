@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import dagre from 'dagre';
 import { RecipeNode, RecipeEdge, ProcessType } from '../types/recipe';
-import { useRecipeStore } from '../store/useRecipeStore';
+import { useRecipeStore, useFlatNodes } from '../store/useRecipeStore';
 
 // 布局配置参数
 const LAYOUT_CONFIG = {
@@ -312,7 +312,8 @@ function groupByLevel(
 }
 
 export function useAutoLayout() {
-  const { nodes, edges, setNodes, setEdges } = useRecipeStore();
+  const nodes = useFlatNodes(); // 使用展平的节点数组
+  const { edges, setNodes, setEdges } = useRecipeStore();
   const prevNodesRef = useRef<string>('');
   const prevEdgesRef = useRef<string>('');
 

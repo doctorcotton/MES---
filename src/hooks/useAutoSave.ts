@@ -1,12 +1,13 @@
 import { useEffect, useRef } from 'react';
-import { useRecipeStore } from '../store/useRecipeStore';
+import { useRecipeStore, useFlatNodes } from '../store/useRecipeStore';
 import { useCollabStore } from '../store/useCollabStore';
 import { socketService } from '../services/socketService';
 
 const SAVE_DEBOUNCE = 3000; // 3秒防抖
 
 export function useAutoSave() {
-  const { nodes, edges, metadata, version, setSaving } = useRecipeStore();
+  const { processes, edges, metadata, version, setSaving } = useRecipeStore();
+  const nodes = useFlatNodes(); // 用于向后兼容导出
   const { mode, userId, isEditable } = useCollabStore();
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -33,7 +34,10 @@ export function useAutoSave() {
       try {
         const recipeData = {
           metadata,
-          nodes: nodes.map(({ position, ...node }) => node),
+          processes: processes.map(process => ({
+            ...process,
+            nodes: process.nodes.map(({ position, ...node }) => node), // 排除position
+          })),
           edges,
           version,
         };
@@ -63,5 +67,5 @@ export function useAutoSave() {
         clearTimeout(saveTimeoutRef.current);
       }
     };
-  }, [nodes, edges, metadata, version, mode, userId, setSaving]);
+  }, [processes, edges, metadata, version, mode, userId, setSaving]);
 }

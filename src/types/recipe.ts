@@ -115,6 +115,18 @@ export type ProcessNodeData =
   | ({ processType: ProcessType.OTHER } & { params: string });
 
 /**
+ * 工艺段（Process）定义
+ * 一个工艺段包含多个工艺步骤（Node），代表一个完整的工艺流程单元
+ */
+export interface Process {
+  id: string;              // 工艺段ID，如 "P1", "P2"
+  name: string;            // 工艺段名称（产物名称），如 "糖醇、三氯蔗糖类溶解液"
+  description?: string;    // 工艺段说明
+  color?: string;          // 红框颜色（可选，用于可视化）
+  nodes: RecipeNode[];     // 包含的步骤节点
+}
+
+/**
  * 完整的配方数据对象 (Root Object)
  */
 export interface RecipeSchema {
@@ -123,18 +135,22 @@ export interface RecipeSchema {
     version: string;
     updatedAt: string;
   };
-  nodes: RecipeNode[];
+  processes: Process[];      // 新增：主数据结构（工艺段列表）
   edges: RecipeEdge[];
+  
+  // 向后兼容字段（导入旧数据时使用）
+  nodes?: RecipeNode[];      
 }
 
 /**
  * 节点定义
+ * 新ID格式：{ProcessID}-{StepType}，如 "P1-Dissolution", "P1-Filter"
  */
 export interface RecipeNode {
-  id: string;        // 核心主键，如 "P1"
+  id: string;        // 核心主键，新格式如 "P1-Dissolution"，旧格式如 "P1"（向后兼容）
   type: 'customProcessNode'; // 对应 React Flow 自定义节点组件名
   data: ProcessNodeData & {
-    label: string;       // 步骤名称，如 "糖醇溶解"
+    label: string;       // 步骤名称，如 "溶解"、"0.5μm过滤"、"料赶料"
     deviceCode: string;  // 设备号，如 "TANK_01" (对应表格的位置列)
     ingredients: string; // 原料描述
     // 保留 params 作为向后兼容字段（可选）
@@ -170,13 +186,45 @@ export function isFlavorAdditionNode(node: RecipeNode): node is RecipeNode & { d
  * 连线定义 (包含顺序逻辑)
  */
 export interface RecipeEdge {
-  id: string;        // unique id, e.g., "e_P1-P6"
-  source: string;    // 源节点 ID
-  target: string;    // 目标节点 ID
+  id: string;        // unique id, e.g., "e_P1-Dissolution-P6-Compounding"
+  source: string;    // 源节点 ID（新格式如 "P1-Dissolution"）
+  target: string;    // 目标节点 ID（新格式如 "P6-Compounding"）
   type: 'sequenceEdge'; // 对应 React Flow 自定义连线组件名
   data: {
     sequenceOrder: number; // 投料顺序权重，1 为最优先
   };
   animated?: boolean; // 默认为 true，表示流动方向
   targetHandle?: string; // 目标节点的 handle ID，由布局算法动态分配（如 "target-0", "target-1"）
+}
+
+/**
+ * 工具函数：将Process数组展平为Node数组
+ * 用于兼容ReactFlow（ReactFlow只认识扁平的nodes数组）
+ * 确保每个节点都有 position 属性（ReactFlow 要求）
+ */
+export function flattenProcessesToNodes(processes: Process[]): RecipeNode[] {
+  return processes.flatMap(process => 
+    process.nodes.map(node => ({
+      ...node,
+      position: node.position || { x: 0, y: 0 } // 确保 position 存在
+    }))
+  );
+}
+
+/**
+ * 工具函数：从节点ID提取Process ID
+ * 支持新格式 "P1-Dissolution" 和旧格式 "P1"
+ */
+export function extractProcessIdFromNodeId(nodeId: string): string {
+  const match = nodeId.match(/^([P]\d+)/);
+  return match ? match[1] : nodeId;
+}
+
+/**
+ * 工具函数：查找节点所属的Process
+ */
+export function findProcessByNodeId(processes: Process[], nodeId: string): Process | undefined {
+  return processes.find(process => 
+    process.nodes.some(node => node.id === nodeId)
+  );
 }

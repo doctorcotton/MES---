@@ -17,7 +17,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
-import { useRecipeStore } from '@/store/useRecipeStore';
+import { useRecipeStore, useFlatNodes } from '@/store/useRecipeStore';
 import { RecipeEdge } from '@/types/recipe';
 import { Trash2 } from 'lucide-react';
 
@@ -28,7 +28,8 @@ interface ConnectionModalProps {
 }
 
 export function ConnectionModal({ nodeId, open, onOpenChange }: ConnectionModalProps) {
-  const { nodes, edges, addEdge, removeEdge } = useRecipeStore();
+  const nodes = useFlatNodes(); // 使用展平的节点数组
+  const { edges, addEdge, removeEdge } = useRecipeStore();
   const [targetNodeId, setTargetNodeId] = useState('');
   const [sequenceOrder, setSequenceOrder] = useState(1);
 

@@ -13,7 +13,8 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 import { CustomNode } from './CustomNode';
 import { SequenceEdge } from './SequenceEdge';
-import { useRecipeStore } from '@/store/useRecipeStore';
+import { ProcessGroupLayer } from './ProcessGroupLayer';
+import { useRecipeStore, useFlatNodes } from '@/store/useRecipeStore';
 import { useCollabStore } from '@/store/useCollabStore';
 import { useAutoLayout } from '@/hooks/useAutoLayout';
 
@@ -26,7 +27,8 @@ const edgeTypes = {
 };
 
 export function RecipeFlow() {
-  const { nodes, edges, setSelectedNodeId, setNodes } = useRecipeStore();
+  const nodes = useFlatNodes(); // 使用展平的节点数组
+  const { edges, setSelectedNodeId, setNodes } = useRecipeStore();
   const { mode, isEditable } = useCollabStore();
   const reactFlowInstance = useRef<ReactFlowInstance | null>(null);
   useAutoLayout();
@@ -105,6 +107,7 @@ export function RecipeFlow() {
         connectionMode={ConnectionMode.Loose}
       >
         <Background />
+        <ProcessGroupLayer />
         <Controls />
         <MiniMap />
       </ReactFlow>

@@ -112,54 +112,9 @@ VITE_SOCKET_URL=http://localhost:3001
 PORT=3001
 ```
 
-## 项目结构
-
-```
-src/
-├── components/
-│   ├── ui/              # Shadcn UI 组件
-│   ├── editor/          # 编辑器组件
-│   │   ├── RecipeTable.tsx      # 数据表格
-│   │   └── ConnectionModal.tsx  # 连接管理器
-│   ├── graph/           # 流程图组件
-│   │   ├── RecipeFlow.tsx       # 流程图主组件
-│   │   ├── CustomNode.tsx       # 自定义节点
-│   │   └── SequenceEdge.tsx     # 带顺序标识的连线
-│   ├── collab/          # 协作功能组件
-│   │   ├── EditLockButton.tsx   # 编辑锁定按钮
-│   │   ├── OnlineUsers.tsx      # 在线用户列表
-│   │   ├── DemoModeButton.tsx   # 演示模式切换
-│   │   ├── DemoModeBanner.tsx   # 演示模式横幅
-│   │   └── StatusBar.tsx        # 状态栏
-│   └── layout/          # 布局组件
-│       └── AppLayout.tsx        # 应用主布局
-├── hooks/               # 自定义 Hooks
-│   ├── useAutoLayout.ts         # 自动布局
-│   ├── useSocketSync.ts         # WebSocket 实时同步
-│   ├── useEditLock.ts           # 编辑权限锁定
-│   ├── useAutoSave.ts           # 自动保存
-│   ├── useDemoMode.ts           # 演示模式
-│   └── useHeartbeat.ts          # 心跳检测
-├── store/               # Zustand 状态管理
-│   ├── useRecipeStore.ts        # 配方数据状态
-│   └── useCollabStore.ts        # 协作状态
-├── services/            # 服务层
-│   └── socketService.ts         # Socket.IO 服务
-├── types/               # TypeScript 类型定义
-├── data/                # 初始数据
-└── lib/                 # 工具函数
-
-server/
-├── src/
-│   ├── index.ts         # Express + Socket.IO 服务器
-│   ├── db.ts            # SQLite 数据库操作
-│   ├── lockManager.ts   # 编辑锁管理
-│   ├── userManager.ts   # 用户管理
-│   └── types.ts         # 类型定义
-└── package.json
-```
-
 ## 使用说明
+
+> 💡 **开发者提示**：如需了解项目结构、技术实现细节和开发指南，请参考 [AI-GUIDE.md](./AI-GUIDE.md)
 
 ### 基础操作
 
@@ -237,23 +192,6 @@ server/
   ]
 }
 ```
-
-## 开发指南
-
-### 本地开发
-
-1. 克隆项目
-2. 安装前后端依赖
-3. 启动后端服务器：`cd server && npm run dev`
-4. 启动前端应用：`npm run dev`
-5. 打开浏览器访问前端地址
-
-### 测试多人协作
-
-1. 打开多个浏览器标签页或不同浏览器
-2. 每个标签页会自动分配不同的用户身份
-3. 测试编辑权限申请/释放
-4. 测试实时数据同步
 
 ## 部署
 

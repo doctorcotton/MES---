@@ -6,7 +6,7 @@ import { RecipeSchema } from '../types/recipe';
 
 export function useDemoMode() {
   const { mode, setMode } = useCollabStore();
-  const { nodes, edges, metadata, setNodes, setEdges, exportJSON, syncFromServer } = useRecipeStore();
+  const { processes, edges, metadata, setNodes, setEdges, exportJSON, syncFromServer } = useRecipeStore();
   const isDemoMode = mode === 'demo';
 
   // 进入演示模式时保存服务器数据快照
@@ -16,7 +16,7 @@ export function useDemoMode() {
     // 保存当前服务器数据
     serverSnapshotRef.current = {
       metadata,
-      nodes,
+      processes,
       edges,
     };
     setMode('demo');
@@ -33,18 +33,25 @@ export function useDemoMode() {
       } else {
         // 如果服务器请求失败，使用快照恢复
         if (serverSnapshotRef.current) {
-          const { nodes: savedNodes, edges: savedEdges } = serverSnapshotRef.current;
-          setNodes(savedNodes);
-          setEdges(savedEdges);
+          // 向后兼容：如果快照是旧格式（nodes），需要迁移
+          if (serverSnapshotRef.current.processes) {
+            // 新格式直接使用
+            syncFromServer(serverSnapshotRef.current, serverSnapshotRef.current.version || 1);
+          } else if ((serverSnapshotRef.current as any).nodes) {
+            // 旧格式，通过syncFromServer自动迁移
+            syncFromServer(serverSnapshotRef.current as any, (serverSnapshotRef.current as any).version || 1);
+          }
         }
       }
     } catch (error) {
       console.error('退出演示模式时加载服务器数据失败:', error);
       // 使用快照恢复
       if (serverSnapshotRef.current) {
-        const { nodes: savedNodes, edges: savedEdges } = serverSnapshotRef.current;
-        setNodes(savedNodes);
-        setEdges(savedEdges);
+        if (serverSnapshotRef.current.processes) {
+          syncFromServer(serverSnapshotRef.current, serverSnapshotRef.current.version || 1);
+        } else if ((serverSnapshotRef.current as any).nodes) {
+          syncFromServer(serverSnapshotRef.current as any, (serverSnapshotRef.current as any).version || 1);
+        }
       }
     }
     serverSnapshotRef.current = null;
