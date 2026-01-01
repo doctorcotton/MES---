@@ -42,7 +42,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     <div className="flex h-screen flex-col">
       {/* Header */}
       <header className="flex items-center justify-between border-b bg-slate-900 px-6 py-3">
-        <h1 className="text-xl font-bold text-white">MES 配方编辑器</h1>
+        <h1 className="text-xl font-bold text-white">MES 工艺流程编辑器</h1>
         <div className="flex gap-2">
           <Button 
             variant="outline" 
