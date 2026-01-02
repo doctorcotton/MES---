@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import dagre from 'dagre';
-import { RecipeNode, RecipeEdge, ProcessType } from '../types/recipe';
-import { useRecipeStore, useFlatNodes } from '../store/useRecipeStore';
+import { FlowNode, RecipeEdge, ProcessType } from '../types/recipe';
+import { useRecipeStore, useFlowNodes, useFlowEdges } from '../store/useRecipeStore';
 
 // 布局配置参数
 const LAYOUT_CONFIG = {
@@ -19,39 +19,48 @@ const LAYOUT_CONFIG = {
  * 根据节点类型和参数复杂度动态估算节点高度
  * 这是解决垂直遮挡问题的关键：不同工艺类型的节点实际高度差异很大
  */
-function estimateNodeHeight(node: RecipeNode): number {
+function estimateNodeHeight(node: FlowNode): number {
   const headerHeight = 40;  // 标题栏固定高度
   const baseBodyHeight = 50; // 基础内容区（位置、原料）
   const lineHeight = 20;    // 每行参数高度
   const padding = 20;       // 上下内边距
   
-  let paramLines = 0;
-  switch (node.data.processType) {
-    case ProcessType.DISSOLUTION:
-      paramLines = 4; // 水量、水温、搅拌、赶料
-      break;
-    case ProcessType.COMPOUNDING:
-      paramLines = 3; // 添加物、搅拌、温度
-      break;
-    case ProcessType.TRANSFER:
-      // 根据是否有水量和清洗参数动态计算
-      if ('transferParams' in node.data && node.data.transferParams) {
-        paramLines = 1; // 类型
-        if (node.data.transferParams.waterVolume) paramLines++;
-        if (node.data.transferParams.cleaning) paramLines++;
-      } else {
-        paramLines = 1;
-      }
-      break;
-    case ProcessType.FILTRATION:
-    case ProcessType.FLAVOR_ADDITION:
-      paramLines = 1;
-      break;
-    default:
-      paramLines = 1;
+  // 汇总节点高度
+  if (node.type === 'processSummaryNode') {
+    return headerHeight + baseBodyHeight + padding;
   }
   
-  return headerHeight + baseBodyHeight + (paramLines * lineHeight) + padding;
+  // 子步骤节点高度
+  if (node.type === 'subStepNode' && node.data.subStep) {
+    const subStep = node.data.subStep;
+    let paramLines = 0;
+    switch (subStep.processType) {
+      case ProcessType.DISSOLUTION:
+        paramLines = 4; // 水量、水温、搅拌、赶料
+        break;
+      case ProcessType.COMPOUNDING:
+        paramLines = 3; // 添加物、搅拌、温度
+        break;
+      case ProcessType.TRANSFER:
+        if ('transferParams' in subStep.params && subStep.params.transferParams) {
+          paramLines = 1; // 类型
+          if (subStep.params.transferParams.waterVolume) paramLines++;
+          if (subStep.params.transferParams.cleaning) paramLines++;
+        } else {
+          paramLines = 1;
+        }
+        break;
+      case ProcessType.FILTRATION:
+      case ProcessType.FLAVOR_ADDITION:
+        paramLines = 1;
+        break;
+      default:
+        paramLines = 1;
+    }
+    return headerHeight + baseBodyHeight + (paramLines * lineHeight) + padding;
+  }
+  
+  return headerHeight + baseBodyHeight + padding;
 }
 
 /**
@@ -61,19 +70,20 @@ function propagateChainCentering(
   nodeId: string, 
   x: number, 
   nodePositions: Record<string, { x: number; y: number }>, 
-  edges: RecipeEdge[]
+  edges: RecipeEdge[],
+  nodes: FlowNode[]
 ) {
   const childEdges = edges.filter(e => e.source === nodeId);
   childEdges.forEach(edge => {
     const childId = edge.target;
     const childIncoming = edges.filter(e => e.target === childId);
     // 如果该子节点只有这一个输入（单线链路），则强制对齐
-    if (childIncoming.length === 1) {
-      if (nodePositions[childId]) {
-        nodePositions[childId].x = x;
-        propagateChainCentering(childId, x, nodePositions, edges);
+      if (childIncoming.length === 1) {
+        if (nodePositions[childId]) {
+          nodePositions[childId].x = x;
+          propagateChainCentering(childId, x, nodePositions, edges, nodes);
+        }
       }
-    }
   });
 }
 
@@ -82,7 +92,7 @@ function propagateChainCentering(
  * 系统性解决方案：不仅移动直接父节点，而是移动整个上游分支
  */
 function reorderBranchesHorizontally(
-  nodes: RecipeNode[], 
+  nodes: FlowNode[], 
   edges: RecipeEdge[], 
   nodePositions: Record<string, { x: number; y: number }>
 ) {
@@ -142,7 +152,7 @@ function reorderBranchesHorizontally(
  * 计算反向层级：从终点节点开始反向BFS，标记每个节点距离终点的步数
  * 这样相同反向层级的节点可以对齐在同一Y坐标
  */
-function calculateReverseLevel(nodes: RecipeNode[], edges: RecipeEdge[]): Record<string, number> {
+function calculateReverseLevel(nodes: FlowNode[], edges: RecipeEdge[]): Record<string, number> {
   const levels: Record<string, number> = {};
   
   // 1. 找到终点节点（出度为0的节点）
@@ -192,7 +202,7 @@ function calculateReverseLevel(nodes: RecipeNode[], edges: RecipeEdge[]): Record
 function getUpstreamNodes(
   nodeId: string,
   edges: RecipeEdge[],
-  nodes: RecipeNode[],
+  nodes: FlowNode[],
   visited: Set<string> = new Set()
 ): string[] {
   if (visited.has(nodeId)) return [];
@@ -219,9 +229,9 @@ function getUpstreamNodes(
  * 基于子树规模的加权质心算法
  */
 function calculateConvergenceNodePosition(
-  node: RecipeNode,
+  node: FlowNode,
   edges: RecipeEdge[],
-  nodes: RecipeNode[],
+  nodes: FlowNode[],
   nodePositions: Record<string, { x: number; y: number }>
 ): number {
   // 获取所有输入节点
@@ -279,7 +289,7 @@ function calculateConvergenceNodePosition(
  * 根据节点的输入数量动态调整
  */
 function calculateAdaptiveSpacing(
-  node: RecipeNode,
+  node: FlowNode,
   edges: RecipeEdge[],
   baseSpacing: number = LAYOUT_CONFIG.baseRankSep
 ): number {
@@ -295,10 +305,10 @@ function calculateAdaptiveSpacing(
  * 按层级分组节点
  */
 function groupByLevel(
-  nodes: RecipeNode[],
+  nodes: FlowNode[],
   levels: Record<string, number>
-): Record<number, RecipeNode[]> {
-  const groups: Record<number, RecipeNode[]> = {};
+): Record<number, FlowNode[]> {
+  const groups: Record<number, FlowNode[]> = {};
   
   nodes.forEach(node => {
     const level = levels[node.id] || 0;
@@ -312,8 +322,8 @@ function groupByLevel(
 }
 
 export function useAutoLayout() {
-  const nodes = useFlatNodes(); // 使用展平的节点数组
-  const { edges, setNodes, setEdges } = useRecipeStore();
+  const nodes = useFlowNodes(); // 使用动态生成的节点数组
+  const edges = useFlowEdges(); // 使用动态生成的连线数组
   const prevNodesRef = useRef<string>('');
   const prevEdgesRef = useRef<string>('');
 
@@ -449,17 +459,22 @@ export function useAutoLayout() {
 
     if (LAYOUT_CONFIG.enableWeightedCentering) {
       // 2. 识别汇聚节点并应用加权居中
-      const convergenceNodes = nodes.filter(node => 
-        (nodeIncomingEdges[node.id]?.length || 0) > 1 || 
-        node.data.processType === ProcessType.COMPOUNDING
-      );
+      const convergenceNodes = nodes.filter(node => {
+        const incomingCount = nodeIncomingEdges[node.id]?.length || 0;
+        if (incomingCount > 1) return true;
+        // 检查是否是调配节点（子步骤类型为COMPOUNDING）
+        if (node.type === 'subStepNode' && node.data.subStep) {
+          return node.data.subStep.processType === ProcessType.COMPOUNDING;
+        }
+        return false;
+      });
       
       convergenceNodes.forEach(node => {
         const newX = calculateConvergenceNodePosition(node, edges, nodes, nodePositions);
         nodePositions[node.id].x = newX;
         
         // 3. 系统性解决对齐：将中心位置向下游单线支路传播
-        propagateChainCentering(node.id, newX, nodePositions, edges);
+        propagateChainCentering(node.id, newX, nodePositions, edges, nodes);
       });
     }
 
@@ -483,23 +498,23 @@ export function useAutoLayout() {
       };
     });
 
-    // 更新节点位置（使用动态高度）
-    const layoutedNodes: RecipeNode[] = nodes.map((node) => {
+    // 计算最终位置（考虑节点宽度和高度，以节点中心为基准）
+    const finalPositions: Record<string, { x: number; y: number }> = {};
+    nodes.forEach((node) => {
       const pos = nodePositions[node.id];
-      const width = calculatedNodeWidths[node.id];
+      if (!pos) return;
+      
+      const width = calculatedNodeWidths[node.id] || LAYOUT_CONFIG.baseNodeWidth;
       const height = calculatedNodeHeights[node.id] || estimateNodeHeight(node);
-      if (!pos) return node;
-      return {
-        ...node,
-        style: { ...(node as any).style, width }, 
-        position: {
-          x: pos.x - width / 2,
-          y: pos.y - height / 2,
-        },
+      
+      // 保存位置（以节点左上角为基准，ReactFlow 使用左上角坐标）
+      finalPositions[node.id] = {
+        x: pos.x - width / 2,
+        y: pos.y - height / 2,
       };
     });
 
-    setNodes(layoutedNodes);
-    setEdges(updatedEdges);
-  }, [nodes, edges, setNodes, setEdges]);
+    // 保存位置到 Store，供 useFlowNodes 使用
+    useRecipeStore.getState().setNodePositions(finalPositions);
+  }, [nodes, edges]);
 }

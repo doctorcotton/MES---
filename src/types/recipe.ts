@@ -115,15 +115,38 @@ export type ProcessNodeData =
   | ({ processType: ProcessType.OTHER } & { params: string });
 
 /**
+ * 子步骤定义（用于合并步骤内的子步骤序列）
+ */
+export interface SubStep {
+  id: string;                    // 子步骤ID: "P1-substep-1"
+  order: number;                 // 执行顺序: 1, 2, 3...
+  processType: ProcessType;      // 工艺类型: 溶解、过滤、赶料等
+  label: string;                 // 子步骤名称: "溶解"
+  deviceCode: string;            // 设备编号: "高搅桶1"
+  ingredients: string;           // 原料描述
+  params: ProcessNodeData;       // 工艺参数（根据processType动态）
+}
+
+/**
+ * 步骤节点定义（合并后的整体步骤）
+ */
+export interface ProcessNode {
+  id: string;                    // 节点ID: "P1" (与工艺段ID相同)
+  type: 'processNode';           // 节点类型（固定值）
+  label: string;                 // 节点标签: "糖醇、三氯蔗糖类溶解液"
+  subSteps: SubStep[];           // 子步骤序列
+  position?: { x: number; y: number };  // 布局位置（前端计算）
+}
+
+/**
  * 工艺段（Process）定义
- * 一个工艺段包含多个工艺步骤（Node），代表一个完整的工艺流程单元
+ * 一个工艺段包含一个合并步骤节点，该节点内含多个子步骤序列
  */
 export interface Process {
-  id: string;              // 工艺段ID，如 "P1", "P2"
-  name: string;            // 工艺段名称（产物名称），如 "糖醇、三氯蔗糖类溶解液"
-  description?: string;    // 工艺段说明
-  color?: string;          // 红框颜色（可选，用于可视化）
-  nodes: RecipeNode[];     // 包含的步骤节点
+  id: string;                    // 工艺段ID: "P1"
+  name: string;                  // 工艺段名称: "糖醇、三氯蔗糖类溶解液"
+  description?: string;          // 工艺段描述
+  node: ProcessNode;             // 该工艺段的步骤节点（单节点）
 }
 
 /**
@@ -135,28 +158,29 @@ export interface RecipeSchema {
     version: string;
     updatedAt: string;
   };
-  processes: Process[];      // 新增：主数据结构（工艺段列表）
-  edges: RecipeEdge[];
-  
-  // 向后兼容字段（导入旧数据时使用）
-  nodes?: RecipeNode[];      
+  processes: Process[];      // 主数据结构（工艺段列表）
+  edges: RecipeEdge[];       // 工艺段间连线（只连接Process.id）
 }
 
 /**
- * 节点定义
- * 新ID格式：{ProcessID}-{StepType}，如 "P1-Dissolution", "P1-Filter"
+ * 节点定义（用于流程图渲染）
+ * 支持两种模式：
+ * 1. 汇总节点（折叠模式）：显示工艺段汇总信息
+ * 2. 子步骤节点（展开模式）：显示单个子步骤详情
  */
-export interface RecipeNode {
-  id: string;        // 核心主键，新格式如 "P1-Dissolution"，旧格式如 "P1"（向后兼容）
-  type: 'customProcessNode'; // 对应 React Flow 自定义节点组件名
-  data: ProcessNodeData & {
-    label: string;       // 步骤名称，如 "溶解"、"0.5μm过滤"、"料赶料"
-    deviceCode: string;  // 设备号，如 "TANK_01" (对应表格的位置列)
-    ingredients: string; // 原料描述
-    // 保留 params 作为向后兼容字段（可选）
-    params?: string;
+export interface FlowNode {
+  id: string;        // 节点ID: "P1" (汇总节点) 或 "P1-substep-1" (子步骤节点)
+  type: 'processSummaryNode' | 'subStepNode'; // 节点类型
+  position: { x: number; y: number }; // 由布局算法计算
+  data: {
+    // 汇总节点数据
+    processId?: string;
+    processName?: string;
+    subStepCount?: number;
+    isExpanded?: boolean;
+    // 子步骤节点数据
+    subStep?: SubStep;
   };
-  position: { x: number; y: number }; // 由 Dagre 自动计算，无需持久化存储
 }
 
 /**
@@ -184,11 +208,12 @@ export function isFlavorAdditionNode(node: RecipeNode): node is RecipeNode & { d
 
 /**
  * 连线定义 (包含顺序逻辑)
+ * 只连接工艺段之间，不包含工艺段内部连线
  */
 export interface RecipeEdge {
-  id: string;        // unique id, e.g., "e_P1-Dissolution-P6-Compounding"
-  source: string;    // 源节点 ID（新格式如 "P1-Dissolution"）
-  target: string;    // 目标节点 ID（新格式如 "P6-Compounding"）
+  id: string;        // unique id, e.g., "e_P1-P6"
+  source: string;    // 源工艺段 ID（如 "P1"）
+  target: string;    // 目标工艺段 ID（如 "P6"）
   type: 'sequenceEdge'; // 对应 React Flow 自定义连线组件名
   data: {
     sequenceOrder: number; // 投料顺序权重，1 为最优先
@@ -198,33 +223,25 @@ export interface RecipeEdge {
 }
 
 /**
- * 工具函数：将Process数组展平为Node数组
- * 用于兼容ReactFlow（ReactFlow只认识扁平的nodes数组）
- * 确保每个节点都有 position 属性（ReactFlow 要求）
+ * 工具函数：从子步骤节点ID提取Process ID
+ * 支持格式 "P1-substep-1" -> "P1"
  */
-export function flattenProcessesToNodes(processes: Process[]): RecipeNode[] {
-  return processes.flatMap(process => 
-    process.nodes.map(node => ({
-      ...node,
-      position: node.position || { x: 0, y: 0 } // 确保 position 存在
-    }))
-  );
+export function extractProcessIdFromSubStepId(subStepId: string): string {
+  const match = subStepId.match(/^([P]\d+)-substep-/);
+  return match ? match[1] : subStepId;
 }
 
 /**
- * 工具函数：从节点ID提取Process ID
- * 支持新格式 "P1-Dissolution" 和旧格式 "P1"
+ * 工具函数：查找子步骤所属的Process
  */
-export function extractProcessIdFromNodeId(nodeId: string): string {
-  const match = nodeId.match(/^([P]\d+)/);
-  return match ? match[1] : nodeId;
+export function findProcessBySubStepId(processes: Process[], subStepId: string): Process | undefined {
+  const processId = extractProcessIdFromSubStepId(subStepId);
+  return processes.find(process => process.id === processId);
 }
 
 /**
- * 工具函数：查找节点所属的Process
+ * 工具函数：提取Process节点数组（用于布局）
  */
-export function findProcessByNodeId(processes: Process[], nodeId: string): Process | undefined {
-  return processes.find(process => 
-    process.nodes.some(node => node.id === nodeId)
-  );
+export function extractProcessNodes(processes: Process[]): ProcessNode[] {
+  return processes.map(process => process.node);
 }

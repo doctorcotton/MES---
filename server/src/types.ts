@@ -1,14 +1,7 @@
-import { RecipeNode, RecipeEdge } from '../../src/types/recipe';
+import { RecipeSchema } from '../../src/types/recipe';
 
-export interface RecipeData {
+export interface RecipeData extends RecipeSchema {
   id: string;
-  metadata: {
-    name: string;
-    version: string;
-    updatedAt: string;
-  };
-  nodes: RecipeNode[];
-  edges: RecipeEdge[];
   version: number; // 乐观锁版本号
   updatedBy: string | null;
 }

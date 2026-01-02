@@ -1,10 +1,11 @@
 import { memo } from 'react';
 import { Handle, Position, NodeProps } from 'reactflow';
 import { cn } from '@/lib/utils';
-import { RecipeNode, ProcessType } from '@/types/recipe';
-import { useRecipeStore } from '@/store/useRecipeStore';
+import { FlowNode, SubStep, ProcessType } from '@/types/recipe';
+import { useRecipeStore, useFlowEdges } from '@/store/useRecipeStore';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 
-type CustomNodeData = RecipeNode['data'];
+type CustomNodeData = FlowNode['data'];
 
 // 格式化条件值
 const formatConditionValue = (value: { value: number; unit: string; condition?: string }) => {
@@ -24,16 +25,15 @@ const formatTemperature = (temp: { min?: number; max?: number; unit: string }) =
   return '常温';
 };
 
-// 渲染参数内容
-const renderParams = (data: CustomNodeData) => {
-  switch (data.processType) {
+// 渲染子步骤参数内容
+const renderSubStepParams = (subStep: SubStep) => {
+  switch (subStep.processType) {
     case ProcessType.DISSOLUTION:
-      if ('dissolutionParams' in data) {
-        const params = data.dissolutionParams;
+      if ('dissolutionParams' in subStep.params) {
+        const params = subStep.params.dissolutionParams;
         const tempStr = formatTemperature(params.waterTemp);
         const volumeStr = formatConditionValue(params.waterVolume);
         const rateMap: Record<string, string> = { high: '高速', medium: '中速', low: '低速' };
-        const transferMap: Record<string, string> = { material: '料赶料', water: '水赶料', none: '无' };
         return (
           <div className="space-y-1">
             <div className="text-xs text-gray-700">
@@ -45,17 +45,14 @@ const renderParams = (data: CustomNodeData) => {
             <div className="text-xs text-gray-700">
               <span className="font-medium">搅拌:</span> {rateMap[params.stirringRate]} {params.stirringTime.value}{params.stirringTime.unit}
             </div>
-            <div className="text-xs text-gray-700">
-              <span className="font-medium">赶料:</span> {transferMap[params.transferType]}
-            </div>
           </div>
         );
       }
       break;
 
     case ProcessType.COMPOUNDING:
-      if ('compoundingParams' in data) {
-        const params = data.compoundingParams;
+      if ('compoundingParams' in subStep.params) {
+        const params = subStep.params.compoundingParams;
         const speedStr = formatConditionValue(params.stirringSpeed);
         return (
           <div className="space-y-1">
@@ -65,17 +62,14 @@ const renderParams = (data: CustomNodeData) => {
             <div className="text-xs text-gray-700">
               <span className="font-medium">搅拌:</span> {speedStr} {params.stirringTime.value}{params.stirringTime.unit}
             </div>
-            <div className="text-xs text-gray-700">
-              <span className="font-medium">温度:</span> &lt;{params.finalTemp.max}{params.finalTemp.unit}
-            </div>
           </div>
         );
       }
       break;
 
     case ProcessType.FILTRATION:
-      if ('filtrationParams' in data) {
-        const params = data.filtrationParams;
+      if ('filtrationParams' in subStep.params) {
+        const params = subStep.params.filtrationParams;
         return (
           <div className="text-xs text-gray-700">
             <span className="font-medium">精度:</span> {params.precision.value}{params.precision.unit}
@@ -85,8 +79,8 @@ const renderParams = (data: CustomNodeData) => {
       break;
 
     case ProcessType.TRANSFER:
-      if ('transferParams' in data) {
-        const params = data.transferParams;
+      if ('transferParams' in subStep.params) {
+        const params = subStep.params.transferParams;
         const transferMap: Record<string, string> = { material: '料赶料', water: '水赶料', none: '无' };
         return (
           <div className="space-y-1">
@@ -98,21 +92,16 @@ const renderParams = (data: CustomNodeData) => {
                 <span className="font-medium">水量:</span> {params.waterVolume.value}{params.waterVolume.unit}
               </div>
             )}
-            {params.cleaning && (
-              <div className="text-xs text-gray-700">
-                <span className="font-medium">清洗:</span> {params.cleaning}
-              </div>
-            )}
           </div>
         );
       }
       break;
 
     case ProcessType.FLAVOR_ADDITION:
-      if ('flavorAdditionParams' in data) {
+      if ('flavorAdditionParams' in subStep.params) {
         return (
           <div className="text-xs text-gray-700">
-            <span className="font-medium">方式:</span> {data.flavorAdditionParams.method}
+            <span className="font-medium">方式:</span> {subStep.params.flavorAdditionParams.method}
           </div>
         );
       }
@@ -120,10 +109,10 @@ const renderParams = (data: CustomNodeData) => {
 
     case ProcessType.OTHER:
     default:
-      if ('params' in data && data.params) {
+      if ('params' in subStep.params && subStep.params.params) {
         return (
           <div className="text-xs text-gray-700 font-mono">
-            <span className="font-medium">参数:</span> {data.params}
+            <span className="font-medium">参数:</span> {subStep.params.params}
           </div>
         );
       }
@@ -145,73 +134,140 @@ const getNodeHeaderColor = (processType: ProcessType): string => {
   return colorMap[processType] || 'bg-gray-500';
 };
 
-export const CustomNode = memo(({ id, data, selected }: NodeProps<CustomNodeData>) => {
+export const CustomNode = memo(({ id, data, selected, type }: NodeProps<CustomNodeData>) => {
   const hoveredNodeId = useRecipeStore((state) => state.hoveredNodeId);
-  const edges = useRecipeStore((state) => state.edges);
+  const flowEdges = useFlowEdges();
+  const { toggleProcessExpanded } = useRecipeStore();
   const isHovered = hoveredNodeId === id;
 
   // 获取输入边数量
-  const incomingEdges = edges.filter(edge => edge.target === id);
+  const incomingEdges = flowEdges.filter(edge => edge.target === id);
   const inputCount = incomingEdges.length;
 
-  // 根据工艺类型获取头部颜色
-  const headerColor = getNodeHeaderColor(data.processType);
+  // 判断节点类型
+  const isSummaryNode = type === 'processSummaryNode';
+  const isSubStepNode = type === 'subStepNode';
 
-  return (
-    <div
-      className={cn(
-        'rounded-lg border-2 bg-white shadow-md transition-all',
-        isHovered ? 'border-blue-500 shadow-lg' : 'border-gray-300',
-        selected && 'ring-2 ring-blue-400'
-      )}
-      style={{ minWidth: '200px', width: '100%' }}
-    >
-      {/* Header - 根据工艺类型显示不同颜色 */}
-      <div className={cn('rounded-t-lg px-3 py-2', headerColor)}>
-        <div className="font-bold text-white">
-          <span className="text-sm">{id}</span>
-          <span className="ml-2">{data.label}</span>
+  // 汇总节点渲染
+  if (isSummaryNode && data.processId) {
+    const process = useRecipeStore.getState().processes.find(p => p.id === data.processId);
+    const firstSubStep = process?.node.subSteps[0];
+    const headerColor = firstSubStep ? getNodeHeaderColor(firstSubStep.processType) : 'bg-gray-500';
+
+    return (
+      <div
+        className={cn(
+          'rounded-lg border-2 bg-white shadow-md transition-all cursor-pointer',
+          isHovered ? 'border-blue-500 shadow-lg' : 'border-gray-300',
+          selected && 'ring-2 ring-blue-400'
+        )}
+        style={{ minWidth: '200px', width: '100%' }}
+        onClick={() => toggleProcessExpanded(data.processId!)}
+      >
+        {/* Header */}
+        <div className={cn('rounded-t-lg px-3 py-2', headerColor)}>
+          <div className="font-bold text-white flex items-center justify-between">
+            <div>
+              <span className="text-sm">{data.processId}</span>
+              <span className="ml-2">{data.processName}</span>
+            </div>
+            <ChevronRight className="h-4 w-4" />
+          </div>
         </div>
+
+        {/* Body */}
+        <div className="px-3 py-2">
+          <div className="text-xs text-gray-600">
+            <span className="font-medium">包含步骤:</span> {data.subStepCount}个
+          </div>
+        </div>
+
+        {/* Handles */}
+        {inputCount <= 1 ? (
+          <Handle type="target" position={Position.Top} className="w-3 h-3 bg-gray-400" />
+        ) : (
+          Array.from({ length: inputCount }).map((_, index) => {
+            const leftPosition = inputCount > 1 
+              ? 15 + (index * (70 / (inputCount - 1))) 
+              : 50;
+            
+            return (
+              <Handle
+                key={`target-${index}`}
+                id={`target-${index}`}
+                type="target"
+                position={Position.Top}
+                className="w-3 h-3 bg-gray-400"
+                style={{ left: `${leftPosition}%` }}
+              />
+            );
+          })
+        )}
+        <Handle type="source" position={Position.Bottom} className="w-3 h-3 bg-gray-400" />
       </div>
+    );
+  }
 
-      {/* Body - 白色背景 */}
-      <div className="px-3 py-2 space-y-1">
-        <div className="text-xs text-gray-600">
-          <span className="font-medium">位置:</span> {data.deviceCode}
+  // 子步骤节点渲染
+  if (isSubStepNode && data.subStep) {
+    const subStep = data.subStep;
+    const headerColor = getNodeHeaderColor(subStep.processType);
+
+    return (
+      <div
+        className={cn(
+          'rounded-lg border-2 bg-white shadow-md transition-all',
+          isHovered ? 'border-blue-500 shadow-lg' : 'border-gray-300',
+          selected && 'ring-2 ring-blue-400'
+        )}
+        style={{ minWidth: '200px', width: '100%' }}
+      >
+        {/* Header */}
+        <div className={cn('rounded-t-lg px-3 py-2', headerColor)}>
+          <div className="font-bold text-white">
+            <span className="text-sm">{subStep.order}.</span>
+            <span className="ml-2">{subStep.label}</span>
+          </div>
         </div>
-        <div className="text-xs text-gray-600">
-          <span className="font-medium">原料:</span> {data.ingredients}
+
+        {/* Body */}
+        <div className="px-3 py-2 space-y-1">
+          <div className="text-xs text-gray-600">
+            <span className="font-medium">位置:</span> {subStep.deviceCode}
+          </div>
+          <div className="text-xs text-gray-600">
+            <span className="font-medium">原料:</span> {subStep.ingredients}
+          </div>
+          {renderSubStepParams(subStep)}
         </div>
-        {renderParams(data)}
+
+        {/* Handles */}
+        {inputCount <= 1 ? (
+          <Handle type="target" position={Position.Top} className="w-3 h-3 bg-gray-400" />
+        ) : (
+          Array.from({ length: inputCount }).map((_, index) => {
+            const leftPosition = inputCount > 1 
+              ? 15 + (index * (70 / (inputCount - 1))) 
+              : 50;
+            
+            return (
+              <Handle
+                key={`target-${index}`}
+                id={`target-${index}`}
+                type="target"
+                position={Position.Top}
+                className="w-3 h-3 bg-gray-400"
+                style={{ left: `${leftPosition}%` }}
+              />
+            );
+          })
+        )}
+        <Handle type="source" position={Position.Bottom} className="w-3 h-3 bg-gray-400" />
       </div>
+    );
+  }
 
-      {/* Handles */}
-      {inputCount <= 1 ? (
-        <Handle type="target" position={Position.Top} className="w-3 h-3 bg-gray-400" />
-      ) : (
-        // 固定渲染 inputCount 个 handles，ID 为 target-0 到 target-N-1
-        // 这样 useAutoLayout 分配的 targetHandle 就能精确匹配到实际渲染的 handle ID
-        Array.from({ length: inputCount }).map((_, index) => {
-          // 计算分布：增加两侧 15% 的 padding，中间均匀分布
-          const leftPosition = inputCount > 1 
-            ? 15 + (index * (70 / (inputCount - 1))) 
-            : 50;
-          
-          return (
-            <Handle
-              key={`target-${index}`}
-              id={`target-${index}`}
-              type="target"
-              position={Position.Top}
-              className="w-3 h-3 bg-gray-400"
-              style={{ left: `${leftPosition}%` }}
-            />
-          );
-        })
-      )}
-      <Handle type="source" position={Position.Bottom} className="w-3 h-3 bg-gray-400" />
-    </div>
-  );
+  return null;
 });
 
 CustomNode.displayName = 'CustomNode';

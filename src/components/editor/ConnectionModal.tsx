@@ -17,34 +17,34 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
-import { useRecipeStore, useFlatNodes } from '@/store/useRecipeStore';
+import { useRecipeStore } from '@/store/useRecipeStore';
 import { RecipeEdge } from '@/types/recipe';
 import { Trash2 } from 'lucide-react';
 
 interface ConnectionModalProps {
-  nodeId: string;
+  nodeId: string; // 保持参数名兼容，但实际是 processId
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
 export function ConnectionModal({ nodeId, open, onOpenChange }: ConnectionModalProps) {
-  const nodes = useFlatNodes(); // 使用展平的节点数组
-  const { edges, addEdge, removeEdge } = useRecipeStore();
-  const [targetNodeId, setTargetNodeId] = useState('');
+  const { processes, edges, addEdge, removeEdge } = useRecipeStore();
+  const processId = nodeId; // nodeId 实际是工艺段ID
+  const [targetProcessId, setTargetProcessId] = useState('');
   const [sequenceOrder, setSequenceOrder] = useState(1);
 
-  // 获取当前节点的所有输出连接
-  const currentConnections = edges.filter((edge) => edge.source === nodeId);
+  // 获取当前工艺段的所有输出连接
+  const currentConnections = edges.filter((edge) => edge.source === processId);
 
-  // 可用的目标节点（排除自身）
-  const availableTargets = nodes.filter((node) => node.id !== nodeId);
+  // 可用的目标工艺段（排除自身）
+  const availableTargets = processes.filter((process) => process.id !== processId);
 
   const handleAddConnection = () => {
-    if (!targetNodeId) return;
+    if (!targetProcessId) return;
 
     // 检查是否已存在相同的连接
     const existingEdge = edges.find(
-      (edge) => edge.source === nodeId && edge.target === targetNodeId
+      (edge) => edge.source === processId && edge.target === targetProcessId
     );
 
     if (existingEdge) {
@@ -53,16 +53,16 @@ export function ConnectionModal({ nodeId, open, onOpenChange }: ConnectionModalP
     }
 
     const newEdge: RecipeEdge = {
-      id: `e_${nodeId}-${targetNodeId}-${Date.now()}`,
-      source: nodeId,
-      target: targetNodeId,
+      id: `e_${processId}-${targetProcessId}-${Date.now()}`,
+      source: processId,
+      target: targetProcessId,
       type: 'sequenceEdge',
       data: { sequenceOrder },
       animated: true,
     };
 
     addEdge(newEdge);
-    setTargetNodeId('');
+    setTargetProcessId('');
     setSequenceOrder(1);
   };
 
@@ -74,24 +74,24 @@ export function ConnectionModal({ nodeId, open, onOpenChange }: ConnectionModalP
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
-          <DialogTitle>配置 {nodeId} 的输出流向</DialogTitle>
+          <DialogTitle>配置 {processId} 的输出流向</DialogTitle>
           <DialogDescription>
-            添加或管理该节点的输出连接，并设置投料顺序
+            添加或管理该工艺段的输出连接，并设置投料顺序
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-4">
           {/* 添加新连接 */}
           <div className="space-y-2">
-            <Label>目标节点</Label>
-            <Select value={targetNodeId} onValueChange={setTargetNodeId}>
+            <Label>目标工艺段</Label>
+            <Select value={targetProcessId} onValueChange={setTargetProcessId}>
               <SelectTrigger>
-                <SelectValue placeholder="选择目标节点" />
+                <SelectValue placeholder="选择目标工艺段" />
               </SelectTrigger>
               <SelectContent>
-                {availableTargets.map((node) => (
-                  <SelectItem key={node.id} value={node.id}>
-                    {node.id} - {node.data.label}
+                {availableTargets.map((process) => (
+                  <SelectItem key={process.id} value={process.id}>
+                    {process.id} - {process.name}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -118,7 +118,7 @@ export function ConnectionModal({ nodeId, open, onOpenChange }: ConnectionModalP
               <Label>已有连接</Label>
               <div className="space-y-2 max-h-48 overflow-y-auto">
                 {currentConnections.map((edge) => {
-                  const targetNode = nodes.find((n) => n.id === edge.target);
+                  const targetProcess = processes.find((p) => p.id === edge.target);
                   return (
                     <div
                       key={edge.id}
@@ -126,7 +126,7 @@ export function ConnectionModal({ nodeId, open, onOpenChange }: ConnectionModalP
                     >
                       <div>
                         <span className="font-medium">
-                          → {edge.target} ({targetNode?.data.label})
+                          → {edge.target} ({targetProcess?.name})
                         </span>
                         <span className="ml-2 text-sm text-gray-500">
                           序列: {edge.data.sequenceOrder}

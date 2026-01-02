@@ -1,17 +1,20 @@
 import Database from 'better-sqlite3';
 import { RecipeData } from './types';
-import { initialNodes, initialEdges } from '../../src/data/initialData';
+import { initialProcesses, initialEdges } from '../../src/data/initialData';
 
 const db = new Database('recipe.db');
 
 // 初始化数据库
 export function initDatabase() {
-  // 创建配方表
+  // 删除旧表（如果存在）
+  db.exec(`DROP TABLE IF EXISTS recipes`);
+  
+  // 创建新配方表
   db.exec(`
-    CREATE TABLE IF NOT EXISTS recipes (
+    CREATE TABLE recipes (
       id TEXT PRIMARY KEY,
       metadata TEXT NOT NULL,
-      nodes TEXT NOT NULL,
+      processes TEXT NOT NULL,
       edges TEXT NOT NULL,
       version INTEGER DEFAULT 1,
       updated_at TEXT NOT NULL,
@@ -29,19 +32,19 @@ export function initDatabase() {
         version: '1.0.0',
         updatedAt: new Date().toISOString(),
       },
-      nodes: initialNodes,
+      processes: initialProcesses,
       edges: initialEdges,
       version: 1,
       updatedBy: null,
     };
 
     db.prepare(`
-      INSERT INTO recipes (id, metadata, nodes, edges, version, updated_at, updated_by)
+      INSERT INTO recipes (id, metadata, processes, edges, version, updated_at, updated_by)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(
       defaultRecipe.id,
       JSON.stringify(defaultRecipe.metadata),
-      JSON.stringify(defaultRecipe.nodes),
+      JSON.stringify(defaultRecipe.processes),
       JSON.stringify(defaultRecipe.edges),
       defaultRecipe.version,
       defaultRecipe.metadata.updatedAt,
@@ -57,7 +60,7 @@ export function getRecipe(recipeId: string = 'default'): RecipeData | null {
   return {
     id: row.id,
     metadata: JSON.parse(row.metadata),
-    nodes: JSON.parse(row.nodes),
+    processes: JSON.parse(row.processes),
     edges: JSON.parse(row.edges),
     version: row.version,
     updatedBy: row.updated_by,
@@ -78,11 +81,11 @@ export function updateRecipe(recipeId: string, data: Omit<RecipeData, 'id'>, use
 
   const result = db.prepare(`
     UPDATE recipes 
-    SET metadata = ?, nodes = ?, edges = ?, version = ?, updated_at = ?, updated_by = ?
+    SET metadata = ?, processes = ?, edges = ?, version = ?, updated_at = ?, updated_by = ?
     WHERE id = ? AND version = ?
   `).run(
     JSON.stringify(data.metadata),
-    JSON.stringify(data.nodes),
+    JSON.stringify(data.processes),
     JSON.stringify(data.edges),
     newVersion,
     updatedAt,

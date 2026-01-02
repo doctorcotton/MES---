@@ -18,98 +18,106 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { useRecipeStore, useFlatNodes } from '@/store/useRecipeStore';
-import { RecipeNode, ProcessType, ConditionType, StirringRate, TransferType } from '@/types/recipe';
+import { useRecipeStore } from '@/store/useRecipeStore';
+import { ProcessType, ConditionType, StirringRate, TransferType } from '@/types/recipe';
 
 interface ParamsModalProps {
-  nodeId: string;
+  nodeId: string; // 保持参数名兼容，但实际是 subStepId
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
 export function ParamsModal({ nodeId, open, onOpenChange }: ParamsModalProps) {
-  const nodes = useFlatNodes();
-  const { updateNode } = useRecipeStore();
-  const node = nodes.find(n => n.id === nodeId);
+  const { processes, updateSubStep } = useRecipeStore();
+  const subStepId = nodeId; // nodeId 实际是子步骤ID
+  
+  // 查找包含该子步骤的工艺段
+  const process = processes.find(p => 
+    p.node.subSteps.some(s => s.id === subStepId)
+  );
+  const subStep = process?.node.subSteps.find(s => s.id === subStepId);
   
   const [formData, setFormData] = useState<any>({});
 
   // 初始化表单数据
   useEffect(() => {
-    if (!node) return;
+    if (!subStep || !process) return;
     
-    switch (node.data.processType) {
+    switch (subStep.processType) {
       case ProcessType.DISSOLUTION:
-        if ('dissolutionParams' in node.data) {
+        if ('dissolutionParams' in subStep.params) {
           setFormData({
-            waterVolume: node.data.dissolutionParams.waterVolume.value,
-            waterVolumeUnit: node.data.dissolutionParams.waterVolume.unit,
-            waterVolumeCondition: node.data.dissolutionParams.waterVolume.condition || '>=',
-            waterTempMin: node.data.dissolutionParams.waterTemp.min,
-            waterTempMax: node.data.dissolutionParams.waterTemp.max,
-            waterTempUnit: node.data.dissolutionParams.waterTemp.unit,
-            stirringTime: node.data.dissolutionParams.stirringTime.value,
-            stirringTimeUnit: node.data.dissolutionParams.stirringTime.unit,
-            stirringRate: node.data.dissolutionParams.stirringRate,
-            transferType: node.data.dissolutionParams.transferType,
+            waterVolume: subStep.params.dissolutionParams.waterVolume.value,
+            waterVolumeUnit: subStep.params.dissolutionParams.waterVolume.unit,
+            waterVolumeCondition: subStep.params.dissolutionParams.waterVolume.condition || '>=',
+            waterTempMin: subStep.params.dissolutionParams.waterTemp.min,
+            waterTempMax: subStep.params.dissolutionParams.waterTemp.max,
+            waterTempUnit: subStep.params.dissolutionParams.waterTemp.unit,
+            stirringTime: subStep.params.dissolutionParams.stirringTime.value,
+            stirringTimeUnit: subStep.params.dissolutionParams.stirringTime.unit,
+            stirringRate: subStep.params.dissolutionParams.stirringRate,
+            transferType: subStep.params.dissolutionParams.transferType,
           });
         }
         break;
       case ProcessType.COMPOUNDING:
-        if ('compoundingParams' in node.data) {
+        if ('compoundingParams' in subStep.params) {
           setFormData({
-            stirringSpeed: node.data.compoundingParams.stirringSpeed.value,
-            stirringSpeedUnit: node.data.compoundingParams.stirringSpeed.unit,
-            stirringSpeedCondition: node.data.compoundingParams.stirringSpeed.condition || '>=',
-            stirringTime: node.data.compoundingParams.stirringTime.value,
-            stirringTimeUnit: node.data.compoundingParams.stirringTime.unit,
-            finalTempMax: node.data.compoundingParams.finalTemp.max,
-            finalTempUnit: node.data.compoundingParams.finalTemp.unit,
-            additives: node.data.compoundingParams.additives,
+            stirringSpeed: subStep.params.compoundingParams.stirringSpeed.value,
+            stirringSpeedUnit: subStep.params.compoundingParams.stirringSpeed.unit,
+            stirringSpeedCondition: subStep.params.compoundingParams.stirringSpeed.condition || '>=',
+            stirringTime: subStep.params.compoundingParams.stirringTime.value,
+            stirringTimeUnit: subStep.params.compoundingParams.stirringTime.unit,
+            finalTempMax: subStep.params.compoundingParams.finalTemp.max,
+            finalTempUnit: subStep.params.compoundingParams.finalTemp.unit,
+            additives: subStep.params.compoundingParams.additives,
           });
         }
         break;
       case ProcessType.FILTRATION:
-        if ('filtrationParams' in node.data) {
+        if ('filtrationParams' in subStep.params) {
           setFormData({
-            precision: node.data.filtrationParams.precision.value,
-            precisionUnit: node.data.filtrationParams.precision.unit,
+            precision: subStep.params.filtrationParams.precision.value,
+            precisionUnit: subStep.params.filtrationParams.precision.unit,
           });
         }
         break;
       case ProcessType.TRANSFER:
-        if ('transferParams' in node.data) {
+        if ('transferParams' in subStep.params) {
           setFormData({
-            transferType: node.data.transferParams.transferType,
-            waterVolume: node.data.transferParams.waterVolume?.value,
-            waterVolumeUnit: node.data.transferParams.waterVolume?.unit,
-            cleaning: node.data.transferParams.cleaning || '',
+            transferType: subStep.params.transferParams.transferType,
+            waterVolume: subStep.params.transferParams.waterVolume?.value,
+            waterVolumeUnit: subStep.params.transferParams.waterVolume?.unit,
+            cleaning: subStep.params.transferParams.cleaning || '',
           });
         }
         break;
       case ProcessType.FLAVOR_ADDITION:
-        if ('flavorAdditionParams' in node.data) {
+        if ('flavorAdditionParams' in subStep.params) {
           setFormData({
-            method: node.data.flavorAdditionParams.method,
+            method: subStep.params.flavorAdditionParams.method,
           });
         }
         break;
       case ProcessType.OTHER:
-        setFormData({
-          params: node.data.params || '',
-        });
+        if ('params' in subStep.params) {
+          setFormData({
+            params: subStep.params.params || '',
+          });
+        }
         break;
     }
-  }, [node, open]);
+  }, [subStep, process, open]);
 
   const handleSave = () => {
-    if (!node) return;
+    if (!subStep || !process) return;
 
-    let updateData: any = {};
+    let updateParams: any = {};
 
-    switch (node.data.processType) {
+    switch (subStep.processType) {
       case ProcessType.DISSOLUTION:
-        updateData = {
+        updateParams = {
+          processType: ProcessType.DISSOLUTION,
           dissolutionParams: {
             waterVolume: {
               value: Number(formData.waterVolume),
@@ -131,7 +139,8 @@ export function ParamsModal({ nodeId, open, onOpenChange }: ParamsModalProps) {
         };
         break;
       case ProcessType.COMPOUNDING:
-        updateData = {
+        updateParams = {
+          processType: ProcessType.COMPOUNDING,
           compoundingParams: {
             additives: formData.additives || [],
             stirringSpeed: {
@@ -151,7 +160,8 @@ export function ParamsModal({ nodeId, open, onOpenChange }: ParamsModalProps) {
         };
         break;
       case ProcessType.FILTRATION:
-        updateData = {
+        updateParams = {
+          processType: ProcessType.FILTRATION,
           filtrationParams: {
             precision: {
               value: Number(formData.precision),
@@ -161,7 +171,8 @@ export function ParamsModal({ nodeId, open, onOpenChange }: ParamsModalProps) {
         };
         break;
       case ProcessType.TRANSFER:
-        updateData = {
+        updateParams = {
+          processType: ProcessType.TRANSFER,
           transferParams: {
             transferType: formData.transferType as TransferType,
             waterVolume: formData.waterVolume ? {
@@ -173,27 +184,29 @@ export function ParamsModal({ nodeId, open, onOpenChange }: ParamsModalProps) {
         };
         break;
       case ProcessType.FLAVOR_ADDITION:
-        updateData = {
+        updateParams = {
+          processType: ProcessType.FLAVOR_ADDITION,
           flavorAdditionParams: {
             method: formData.method || '',
           },
         };
         break;
       case ProcessType.OTHER:
-        updateData = {
+        updateParams = {
+          processType: ProcessType.OTHER,
           params: formData.params || '',
         };
         break;
     }
 
-    updateNode(nodeId, updateData);
+    updateSubStep(process.id, subStepId, { params: updateParams });
     onOpenChange(false);
   };
 
-  if (!node) return null;
+  if (!subStep || !process) return null;
 
   const renderForm = () => {
-    switch (node.data.processType) {
+    switch (subStep.processType) {
       case ProcessType.DISSOLUTION:
         return (
           <div className="space-y-4">
@@ -479,9 +492,9 @@ export function ParamsModal({ nodeId, open, onOpenChange }: ParamsModalProps) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>编辑关键参数 - {node?.id}</DialogTitle>
+          <DialogTitle>编辑关键参数 - {subStep?.id}</DialogTitle>
           <DialogDescription>
-            {node?.data.label} - {getProcessTypeLabel(node?.data.processType)}
+            {subStep?.label} - {getProcessTypeLabel(subStep?.processType)}
           </DialogDescription>
         </DialogHeader>
 

@@ -8,18 +8,17 @@ import ReactFlow, {
   ConnectionMode,
   ReactFlowInstance,
   NodeChange,
-  applyNodeChanges,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { CustomNode } from './CustomNode';
 import { SequenceEdge } from './SequenceEdge';
-import { ProcessGroupLayer } from './ProcessGroupLayer';
-import { useRecipeStore, useFlatNodes } from '@/store/useRecipeStore';
+import { useRecipeStore, useFlowNodes, useFlowEdges } from '@/store/useRecipeStore';
 import { useCollabStore } from '@/store/useCollabStore';
 import { useAutoLayout } from '@/hooks/useAutoLayout';
 
 const nodeTypes = {
-  customProcessNode: CustomNode,
+  processSummaryNode: CustomNode,
+  subStepNode: CustomNode,
 };
 
 const edgeTypes = {
@@ -27,8 +26,9 @@ const edgeTypes = {
 };
 
 export function RecipeFlow() {
-  const nodes = useFlatNodes(); // 使用展平的节点数组
-  const { edges, setSelectedNodeId, setNodes } = useRecipeStore();
+  const nodes = useFlowNodes(); // 使用动态生成的节点数组
+  const edges = useFlowEdges(); // 使用动态生成的连线数组
+  const { setSelectedNodeId } = useRecipeStore();
   const { mode, isEditable } = useCollabStore();
   const reactFlowInstance = useRef<ReactFlowInstance | null>(null);
   useAutoLayout();
@@ -79,14 +79,14 @@ export function RecipeFlow() {
   }, []);
 
   const onNodesChange = useCallback(
-    (changes: NodeChange[]) => {
+    (_changes: NodeChange[]) => {
       // 只读模式下不允许任何节点变化
       if (isReadOnly) return;
       
-      const updatedNodes = applyNodeChanges(changes, nodes as Node[]);
-      setNodes(updatedNodes as any);
+      // 节点位置变化由布局算法处理，这里不需要更新store
+      // 因为节点是动态生成的，位置由布局算法计算
     },
-    [nodes, isReadOnly, setNodes]
+    [isReadOnly]
   );
 
   return (
@@ -107,7 +107,6 @@ export function RecipeFlow() {
         connectionMode={ConnectionMode.Loose}
       >
         <Background />
-        <ProcessGroupLayer />
         <Controls />
         <MiniMap />
       </ReactFlow>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Table,
   TableBody,
@@ -10,12 +10,12 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { useRecipeStore, useFlatNodes } from '@/store/useRecipeStore';
+import { useRecipeStore } from '@/store/useRecipeStore';
 import { useCollabStore } from '@/store/useCollabStore';
 import { ConnectionModal } from './ConnectionModal';
 import { ParamsModal } from './ParamsModal';
-import { Plus, Trash2, ExternalLink, Lock, ChevronDown, ChevronRight, Edit2 } from 'lucide-react';
-import { RecipeNode, ProcessType, findProcessByNodeId } from '@/types/recipe';
+import { Plus, Trash2, Lock, ChevronDown, ChevronRight, Edit2 } from 'lucide-react';
+import { SubStep, ProcessType } from '@/types/recipe';
 
 // 工艺类型中文映射
 const getProcessTypeLabel = (type: ProcessType): string => {
@@ -34,28 +34,48 @@ export function RecipeTable() {
   const {
     processes,
     edges,
-    addNode,
-    updateNode,
-    removeNode,
+    addSubStep,
+    updateSubStep,
+    removeSubStep,
     addProcess,
     updateProcess,
     removeProcess,
     hoveredNodeId,
     setHoveredNodeId,
   } = useRecipeStore();
-  const nodes = useFlatNodes();
   const { isEditable, mode } = useCollabStore();
   const canEdit = mode === 'demo' || isEditable();
 
-  const [connectionModalNodeId, setConnectionModalNodeId] = useState<string | null>(null);
-  const [paramsModalNodeId, setParamsModalNodeId] = useState<string | null>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [connectionModalProcessId, setConnectionModalProcessId] = useState<string | null>(null);
+  const [paramsModalSubStepId, setParamsModalSubStepId] = useState<string | null>(null);
+  const [editingSubStepId, setEditingSubStepId] = useState<string | null>(null);
   const [editingProcessId, setEditingProcessId] = useState<string | null>(null);
-  const [editValues, setEditValues] = useState<Partial<RecipeNode['data']>>({});
+  const [editSubStepValues, setEditSubStepValues] = useState<Partial<SubStep>>({});
   const [editProcessValues, setEditProcessValues] = useState<{ name?: string; description?: string }>({});
   const [expandedProcesses, setExpandedProcesses] = useState<Set<string>>(
     new Set(processes.map(p => p.id))
   );
+
+  // 同步expandedProcesses，确保processes更新时也更新展开状态
+  useEffect(() => {
+    setExpandedProcesses(prev => {
+      const currentIds = new Set(processes.map(p => p.id));
+      // 保留已展开的，添加新processes的ID
+      const next = new Set(prev);
+      processes.forEach(p => {
+        if (!next.has(p.id)) {
+          next.add(p.id); // 新processes默认展开
+        }
+      });
+      // 移除已删除的processes
+      prev.forEach(id => {
+        if (!currentIds.has(id)) {
+          next.delete(id);
+        }
+      });
+      return next;
+    });
+  }, [processes]);
 
   const toggleProcessExpanded = (processId: string) => {
     setExpandedProcesses(prev => {
@@ -78,7 +98,12 @@ export function RecipeTable() {
     addProcess({
       id: newProcessId,
       name: `新工艺段${newProcessId}`,
-      nodes: [],
+      node: {
+        id: newProcessId,
+        type: 'processNode',
+        label: `新工艺段${newProcessId}`,
+        subSteps: [],
+      },
     });
     setEditingProcessId(newProcessId);
     setEditProcessValues({ name: `新工艺段${newProcessId}` });
@@ -100,68 +125,67 @@ export function RecipeTable() {
     }
   };
 
-  const handleAddNodeToProcess = (processId: string) => {
+  const handleAddSubStep = (processId: string) => {
     if (!canEdit) {
       alert('需要编辑权限或进入演示模式');
       return;
     }
     const process = processes.find(p => p.id === processId);
-    const nodeCount = process?.nodes.length || 0;
-    const newId = `${processId}-Step${nodeCount + 1}`;
-    const newNode: RecipeNode = {
-      id: newId,
-      type: 'customProcessNode',
-      position: { x: 0, y: 0 },
-      data: {
+    const subStepCount = process?.node.subSteps.length || 0;
+    const newSubStep: SubStep = {
+      id: `${processId}-substep-${subStepCount + 1}`,
+      order: subStepCount + 1,
+      processType: ProcessType.OTHER,
+      label: '新步骤',
+      deviceCode: '',
+      ingredients: '',
+      params: {
         processType: ProcessType.OTHER,
-        label: '新步骤',
-        deviceCode: '',
-        ingredients: '',
         params: '',
       },
     };
-    addNode(newNode);
-    setEditingId(newId);
-    setEditValues(newNode.data);
+    addSubStep(processId, newSubStep);
+    setEditingSubStepId(newSubStep.id);
+    setEditSubStepValues(newSubStep);
   };
 
-  const handleStartEdit = (node: RecipeNode) => {
-    setEditingId(node.id);
-    setEditValues(node.data);
+  const handleStartEditSubStep = (subStep: SubStep) => {
+    setEditingSubStepId(subStep.id);
+    setEditSubStepValues(subStep);
   };
 
-  const handleSaveEdit = (id: string) => {
-    if (editingId === id) {
-      updateNode(id, editValues);
-      setEditingId(null);
-      setEditValues({});
+  const handleSaveEditSubStep = (processId: string, subStepId: string) => {
+    if (editingSubStepId === subStepId) {
+      updateSubStep(processId, subStepId, editSubStepValues);
+      setEditingSubStepId(null);
+      setEditSubStepValues({});
     }
   };
 
   const handleCancelEdit = () => {
-    setEditingId(null);
-    setEditValues({});
+    setEditingSubStepId(null);
+    setEditSubStepValues({});
   };
 
-  const getNodeConnections = (nodeId: string) => {
+  const getProcessConnections = (processId: string) => {
     return edges
-      .filter((edge) => edge.source === nodeId)
+      .filter((edge) => edge.source === processId)
       .map((edge) => {
-        const targetNode = nodes.find((n) => n.id === edge.target);
+        const targetProcess = processes.find((p) => p.id === edge.target);
         return {
           edge,
-          target: targetNode?.data.label || edge.target,
+          target: targetProcess?.name || edge.target,
           sequence: edge.data.sequenceOrder,
         };
       });
   };
 
-  // 格式化参数显示
-  const formatParamsDisplay = (data: RecipeNode['data']): string => {
-    switch (data.processType) {
+  // 格式化子步骤参数显示
+  const formatSubStepParamsDisplay = (subStep: SubStep): string => {
+    switch (subStep.processType) {
       case ProcessType.DISSOLUTION:
-        if ('dissolutionParams' in data) {
-          const p = data.dissolutionParams;
+        if ('dissolutionParams' in subStep.params) {
+          const p = subStep.params.dissolutionParams;
           const temp = p.waterTemp.min !== undefined && p.waterTemp.max !== undefined
             ? `${p.waterTemp.min}-${p.waterTemp.max}${p.waterTemp.unit}`
             : '常温';
@@ -171,32 +195,32 @@ export function RecipeTable() {
         }
         break;
       case ProcessType.COMPOUNDING:
-        if ('compoundingParams' in data) {
-          const p = data.compoundingParams;
+        if ('compoundingParams' in subStep.params) {
+          const p = subStep.params.compoundingParams;
           const speed = `${p.stirringSpeed.condition || ''}${p.stirringSpeed.value}${p.stirringSpeed.unit}`;
           return `添加物:${p.additives.length}项 搅拌:${speed} ${p.stirringTime.value}${p.stirringTime.unit} 温度:<${p.finalTemp.max}${p.finalTemp.unit}`;
         }
         break;
       case ProcessType.FILTRATION:
-        if ('filtrationParams' in data) {
-          return `${data.filtrationParams.precision.value}${data.filtrationParams.precision.unit}`;
+        if ('filtrationParams' in subStep.params) {
+          return `${subStep.params.filtrationParams.precision.value}${subStep.params.filtrationParams.precision.unit}`;
         }
         break;
       case ProcessType.TRANSFER:
-        if ('transferParams' in data) {
-          const p = data.transferParams;
+        if ('transferParams' in subStep.params) {
+          const p = subStep.params.transferParams;
           const type = p.transferType === 'material' ? '料赶料' : p.transferType === 'water' ? '水赶料' : '无';
           return type + (p.waterVolume ? ` ${p.waterVolume.value}${p.waterVolume.unit}` : '');
         }
         break;
       case ProcessType.FLAVOR_ADDITION:
-        if ('flavorAdditionParams' in data) {
-          return data.flavorAdditionParams.method;
+        if ('flavorAdditionParams' in subStep.params) {
+          return subStep.params.flavorAdditionParams.method;
         }
         break;
       case ProcessType.OTHER:
-        if ('params' in data && data.params) {
-          return data.params;
+        if ('params' in subStep.params && subStep.params.params) {
+          return subStep.params.params;
         }
         break;
     }
@@ -272,7 +296,7 @@ export function RecipeTable() {
                             )}
                           </span>
                           <span className="text-xs text-gray-500">
-                            ({process.nodes.length}个步骤)
+                            ({process.node.subSteps.length}个步骤)
                           </span>
                         </div>
                         <div className="flex items-center gap-2">
@@ -281,11 +305,11 @@ export function RecipeTable() {
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => handleAddNodeToProcess(process.id)}
-                                title="添加步骤"
+                                onClick={() => handleAddSubStep(process.id)}
+                                title="添加子步骤"
                               >
                                 <Plus className="h-4 w-4 mr-1" />
-                                添加步骤
+                                添加子步骤
                               </Button>
                               <Button
                                 variant="ghost"
@@ -306,36 +330,36 @@ export function RecipeTable() {
                     </TableCell>
                   </TableRow>
 
-                  {/* Process内的节点 */}
-                  {isExpanded && process.nodes.map((node) => {
-                    const isEditing = editingId === node.id;
-                    const isHovered = hoveredNodeId === node.id;
-                    const connections = getNodeConnections(node.id);
+                  {/* Process内的子步骤 */}
+                  {isExpanded && process.node.subSteps.map((subStep) => {
+                    const isEditing = editingSubStepId === subStep.id;
+                    const isHovered = hoveredNodeId === subStep.id;
+                    const processConnections = getProcessConnections(process.id);
 
                     return (
                       <TableRow
-                        key={node.id}
-                        id={`row-${node.id}`}
-                        className={`${isHovered ? 'bg-blue-50' : ''} ${!isExpanded ? 'hidden' : ''}`}
-                        onMouseEnter={() => setHoveredNodeId(node.id)}
+                        key={subStep.id}
+                        id={`row-${subStep.id}`}
+                        className={isHovered ? 'bg-blue-50' : ''}
+                        onMouseEnter={() => setHoveredNodeId(subStep.id)}
                         onMouseLeave={() => setHoveredNodeId(null)}
                       >
                         <TableCell>
                           <span className="text-xs text-gray-400">↑</span>
                         </TableCell>
                         <TableCell>
-                          <span className="font-mono text-sm">{node.id}</span>
+                          <span className="font-mono text-sm">{subStep.order}</span>
                         </TableCell>
                         <TableCell>
                           {isEditing ? (
                             <Input
-                              value={editValues.label ?? node.data.label}
+                              value={editSubStepValues.label ?? subStep.label}
                               onChange={(e) =>
-                                setEditValues({ ...editValues, label: e.target.value })
+                                setEditSubStepValues({ ...editSubStepValues, label: e.target.value })
                               }
-                              onBlur={() => handleSaveEdit(node.id)}
+                              onBlur={() => handleSaveEditSubStep(process.id, subStep.id)}
                               onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleSaveEdit(node.id);
+                                if (e.key === 'Enter') handleSaveEditSubStep(process.id, subStep.id);
                                 if (e.key === 'Escape') handleCancelEdit();
                               }}
                               autoFocus
@@ -344,31 +368,31 @@ export function RecipeTable() {
                           ) : (
                             <span
                               className={`${canEdit ? 'cursor-pointer hover:text-blue-600' : 'cursor-not-allowed opacity-60'}`}
-                              onClick={() => canEdit && handleStartEdit(node)}
+                              onClick={() => canEdit && handleStartEditSubStep(subStep)}
                             >
-                              {node.data.label}
+                              {subStep.label}
                               {!canEdit && <Lock className="ml-1 inline h-3 w-3" />}
                             </span>
                           )}
                         </TableCell>
                         <TableCell>
                           <span className="text-xs text-gray-600">
-                            {getProcessTypeLabel(node.data.processType)}
+                            {getProcessTypeLabel(subStep.processType)}
                           </span>
                         </TableCell>
                         <TableCell>
                           {isEditing ? (
                             <Input
-                              value={editValues.deviceCode ?? node.data.deviceCode}
+                              value={editSubStepValues.deviceCode ?? subStep.deviceCode}
                               onChange={(e) =>
-                                setEditValues({
-                                  ...editValues,
+                                setEditSubStepValues({
+                                  ...editSubStepValues,
                                   deviceCode: e.target.value,
                                 })
                               }
-                              onBlur={() => handleSaveEdit(node.id)}
+                              onBlur={() => handleSaveEditSubStep(process.id, subStep.id)}
                               onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleSaveEdit(node.id);
+                                if (e.key === 'Enter') handleSaveEditSubStep(process.id, subStep.id);
                                 if (e.key === 'Escape') handleCancelEdit();
                               }}
                               disabled={!canEdit}
@@ -376,23 +400,23 @@ export function RecipeTable() {
                           ) : (
                             <span
                               className={`${canEdit ? 'cursor-pointer hover:text-blue-600' : 'cursor-not-allowed opacity-60'}`}
-                              onClick={() => canEdit && handleStartEdit(node)}
+                              onClick={() => canEdit && handleStartEditSubStep(subStep)}
                             >
-                              {node.data.deviceCode}
+                              {subStep.deviceCode}
                             </span>
                           )}
                         </TableCell>
                         <TableCell>
                           {isEditing ? (
                             <Textarea
-                              value={editValues.ingredients ?? node.data.ingredients}
+                              value={editSubStepValues.ingredients ?? subStep.ingredients}
                               onChange={(e) =>
-                                setEditValues({
-                                  ...editValues,
+                                setEditSubStepValues({
+                                  ...editSubStepValues,
                                   ingredients: e.target.value,
                                 })
                               }
-                              onBlur={() => handleSaveEdit(node.id)}
+                              onBlur={() => handleSaveEditSubStep(process.id, subStep.id)}
                               rows={2}
                               className="min-w-[150px]"
                               disabled={!canEdit}
@@ -400,9 +424,9 @@ export function RecipeTable() {
                           ) : (
                             <span
                               className={`text-xs ${canEdit ? 'cursor-pointer hover:text-blue-600' : 'cursor-not-allowed opacity-60'}`}
-                              onClick={() => canEdit && handleStartEdit(node)}
+                              onClick={() => canEdit && handleStartEditSubStep(subStep)}
                             >
-                              {node.data.ingredients}
+                              {subStep.ingredients}
                             </span>
                           )}
                         </TableCell>
@@ -415,45 +439,28 @@ export function RecipeTable() {
                                 alert('需要编辑权限或进入演示模式');
                                 return;
                               }
-                              setParamsModalNodeId(node.id);
+                              setParamsModalSubStepId(subStep.id);
                             }}
                             className="w-full text-xs"
                             disabled={!canEdit}
                             title={!canEdit ? '需要编辑权限' : '点击编辑参数'}
                           >
                             <Edit2 className="mr-1 h-3 w-3" />
-                            {formatParamsDisplay(node.data).substring(0, 20)}
-                            {formatParamsDisplay(node.data).length > 20 ? '...' : ''}
+                            {formatSubStepParamsDisplay(subStep).substring(0, 20)}
+                            {formatSubStepParamsDisplay(subStep).length > 20 ? '...' : ''}
                           </Button>
                         </TableCell>
                         <TableCell>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              if (!canEdit) {
-                                alert('需要编辑权限或进入演示模式');
-                                return;
-                              }
-                              setConnectionModalNodeId(node.id);
-                            }}
-                            className="w-full"
-                            disabled={!canEdit}
-                            title={!canEdit ? '需要编辑权限或进入演示模式' : '配置连接'}
-                          >
-                            <ExternalLink className="mr-1 h-3 w-3" />
-                            {connections.length > 0
-                              ? `${connections.length}个连接`
-                              : '配置'}
-                          </Button>
-                          {connections.length > 0 && (
-                            <div className="mt-1 space-y-0.5 text-xs text-gray-500">
-                              {connections.map((conn, idx) => (
+                          {processConnections.length > 0 ? (
+                            <div className="space-y-0.5 text-xs text-gray-500">
+                              {processConnections.map((conn, idx) => (
                                 <div key={idx}>
                                   → {conn.target} (Seq:{conn.sequence})
                                 </div>
                               ))}
                             </div>
+                          ) : (
+                            <span className="text-xs text-gray-400">-</span>
                           )}
                         </TableCell>
                         <TableCell>
@@ -465,7 +472,7 @@ export function RecipeTable() {
                                 alert('需要编辑权限或进入演示模式');
                                 return;
                               }
-                              removeNode(node.id);
+                              removeSubStep(process.id, subStep.id);
                             }}
                             disabled={!canEdit}
                             title={!canEdit ? '需要编辑权限或进入演示模式' : '删除'}
@@ -495,19 +502,19 @@ export function RecipeTable() {
         </Button>
       </div>
 
-      {connectionModalNodeId && (
+      {connectionModalProcessId && (
         <ConnectionModal
-          nodeId={connectionModalNodeId}
-          open={!!connectionModalNodeId}
-          onOpenChange={(open) => !open && setConnectionModalNodeId(null)}
+          nodeId={connectionModalProcessId}
+          open={!!connectionModalProcessId}
+          onOpenChange={(open) => !open && setConnectionModalProcessId(null)}
         />
       )}
 
-      {paramsModalNodeId && (
+      {paramsModalSubStepId && (
         <ParamsModal
-          nodeId={paramsModalNodeId}
-          open={!!paramsModalNodeId}
-          onOpenChange={(open) => !open && setParamsModalNodeId(null)}
+          nodeId={paramsModalSubStepId}
+          open={!!paramsModalSubStepId}
+          onOpenChange={(open) => !open && setParamsModalSubStepId(null)}
         />
       )}
     </div>
