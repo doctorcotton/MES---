@@ -10,20 +10,56 @@ const LAYOUT_CONFIG = {
   baseRankSep: 180,        // 基础层间距
   extraSpacingPerInput: 30, // 每个额外输入增加的间距
   // nodeSep 将在计算过程中根据节点宽度动态调整，这里作为最小间距参考
-  minNodeSep: 160,            
+  minNodeSep: 100,         // 减小最小节点间距（从160降至100，减少37.5%）            
   enableWeightedCentering: true, // 是否启用加权居中
-  centeringStrategy: 'subtree-size' as 'subtree-size' | 'equal-weight' | 'visual-span'
+  centeringStrategy: 'subtree-size' as 'subtree-size' | 'equal-weight' | 'visual-span',
+  // 分档宽度配置
+  widthTiers: {
+    tier1: { maxInputs: 2, width: 200 },  // 1-2个输入：200px
+    tier2: { maxInputs: 4, width: 280 },  // 3-4个输入：280px
+    tier3: { maxInputs: Infinity, width: 360 } // 5个及以上：360px
+  },
+  // 内容换行估算参数
+  charWidth: 8,           // 每个字符平均宽度（px）
+  lineHeight: 20,         // 每行文本高度（px）
+  minContentWidth: 150,   // 内容区域最小宽度（考虑padding）
 };
 
 /**
- * 根据节点类型和参数复杂度动态估算节点高度
- * 这是解决垂直遮挡问题的关键：不同工艺类型的节点实际高度差异很大
+ * 根据输入数量计算分档宽度
  */
-function estimateNodeHeight(node: FlowNode): number {
+function calculateTieredWidth(inputCount: number): number {
+  const { widthTiers } = LAYOUT_CONFIG;
+  if (inputCount <= widthTiers.tier1.maxInputs) {
+    return widthTiers.tier1.width;
+  } else if (inputCount <= widthTiers.tier2.maxInputs) {
+    return widthTiers.tier2.width;
+  } else {
+    return widthTiers.tier3.width;
+  }
+}
+
+/**
+ * 估算文本内容在给定宽度下的行数（考虑换行）
+ */
+function estimateTextLines(text: string, availableWidth: number): number {
+  if (!text) return 0;
+  const { charWidth } = LAYOUT_CONFIG;
+  const estimatedCharsPerLine = Math.floor(availableWidth / charWidth);
+  if (estimatedCharsPerLine <= 0) return 1;
+  return Math.max(1, Math.ceil(text.length / estimatedCharsPerLine));
+}
+
+/**
+ * 根据节点类型和参数复杂度动态估算节点高度
+ * 考虑内容换行后的实际高度
+ */
+function estimateNodeHeight(node: FlowNode, nodeWidth: number): number {
   const headerHeight = 40;  // 标题栏固定高度
-  const baseBodyHeight = 50; // 基础内容区（位置、原料）
-  const lineHeight = 20;    // 每行参数高度
+  const baseBodyHeight = 30; // 基础内容区最小高度
+  const lineHeight = LAYOUT_CONFIG.lineHeight;    // 每行参数高度
   const padding = 20;       // 上下内边距
+  const contentPadding = 12; // 内容区域左右padding
   
   // 汇总节点高度
   if (node.type === 'processSummaryNode') {
@@ -34,12 +70,31 @@ function estimateNodeHeight(node: FlowNode): number {
   if (node.type === 'subStepNode' && node.data.subStep) {
     const subStep = node.data.subStep;
     let paramLines = 0;
+    let contentLines = 0;
+    
+    // 估算位置和原料的换行行数
+    const availableWidth = nodeWidth - (contentPadding * 2);
+    if (subStep.deviceCode) {
+      contentLines += estimateTextLines(`位置: ${subStep.deviceCode}`, availableWidth);
+    }
+    if (subStep.ingredients) {
+      contentLines += estimateTextLines(`原料: ${subStep.ingredients}`, availableWidth);
+    }
+    
+    // 根据工艺类型估算参数行数
     switch (subStep.processType) {
       case ProcessType.DISSOLUTION:
         paramLines = 4; // 水量、水温、搅拌、赶料
         break;
       case ProcessType.COMPOUNDING:
         paramLines = 3; // 添加物、搅拌、温度
+        // 调配节点需要额外空间显示进料列表
+        // 进料列表高度：每个进料约15-20px，加上标题行
+        const inputCount = node.data.inputSources?.length || 0;
+        if (inputCount > 0) {
+          paramLines += 1; // "进料顺序"标题
+          paramLines += inputCount; // 每个进料一行
+        }
         break;
       case ProcessType.TRANSFER:
         if ('transferParams' in subStep.params && subStep.params.transferParams) {
@@ -57,7 +112,10 @@ function estimateNodeHeight(node: FlowNode): number {
       default:
         paramLines = 1;
     }
-    return headerHeight + baseBodyHeight + (paramLines * lineHeight) + padding;
+    
+    // 总高度 = 标题 + 内容行 + 参数行 + 内边距
+    const totalLines = Math.max(contentLines, 2) + paramLines; // 至少2行基础内容
+    return headerHeight + (totalLines * lineHeight) + padding;
   }
   
   return headerHeight + baseBodyHeight + padding;
@@ -321,6 +379,80 @@ function groupByLevel(
   return groups;
 }
 
+/**
+ * 压缩并行分支的水平间距
+ * 识别同一层级内无直接连接关系的节点，应用更紧凑的间距
+ */
+function compressParallelBranches(
+  nodes: FlowNode[],
+  edges: RecipeEdge[],
+  levels: Record<string, number>,
+  nodePositions: Record<string, { x: number; y: number }>,
+  calculatedNodeWidths: Record<string, number>,
+  compressionRatio: number = 0.65 // 压缩到标准间距的65%
+): void {
+  // 按层级分组
+  const levelGroups = groupByLevel(nodes, levels);
+  
+  // 为每个层级处理并行节点
+  Object.values(levelGroups).forEach(levelNodes => {
+    if (levelNodes.length <= 1) return; // 单个节点无需压缩
+    
+    // 按当前X坐标排序
+    const sortedNodes = [...levelNodes].sort((a, b) => {
+      const posA = nodePositions[a.id]?.x || 0;
+      const posB = nodePositions[b.id]?.x || 0;
+      return posA - posB;
+    });
+    
+    // 检查每对相邻节点是否有直接连接
+    for (let i = 0; i < sortedNodes.length - 1; i++) {
+      const nodeA = sortedNodes[i];
+      const nodeB = sortedNodes[i + 1];
+      
+      // 检查是否有直接连接（A->B 或 B->A）
+      const hasDirectConnection = edges.some(
+        e => (e.source === nodeA.id && e.target === nodeB.id) ||
+             (e.source === nodeB.id && e.target === nodeA.id)
+      );
+      
+      // 如果没有直接连接，则视为并行分支，可以压缩
+      if (!hasDirectConnection) {
+        const posA = nodePositions[nodeA.id];
+        const posB = nodePositions[nodeB.id];
+        if (!posA || !posB) continue;
+        
+        const widthA = calculatedNodeWidths[nodeA.id] || LAYOUT_CONFIG.baseNodeWidth;
+        const widthB = calculatedNodeWidths[nodeB.id] || LAYOUT_CONFIG.baseNodeWidth;
+        
+        // 计算当前间距
+        const currentSpacing = posB.x - posA.x - (widthA / 2) - (widthB / 2);
+        
+        // 计算目标间距（压缩后的间距）
+        const minSpacing = Math.max(
+          LAYOUT_CONFIG.minNodeSep * compressionRatio,
+          (widthA + widthB) / 2 * 0.2 // 至少保持节点宽度的20%作为最小间距
+        );
+        
+        // 如果当前间距大于目标间距，则压缩
+        if (currentSpacing > minSpacing) {
+          const targetSpacing = currentSpacing * compressionRatio;
+          const deltaX = currentSpacing - targetSpacing;
+          
+          // 将右侧节点向左移动（压缩间距）
+          // 同时移动该节点右侧的所有节点，保持相对位置
+          for (let j = i + 1; j < sortedNodes.length; j++) {
+            const rightNode = sortedNodes[j];
+            if (nodePositions[rightNode.id]) {
+              nodePositions[rightNode.id].x -= deltaX;
+            }
+          }
+        }
+      }
+    }
+  });
+}
+
 export function useAutoLayout() {
   const nodes = useFlowNodes(); // 使用动态生成的节点数组
   const edges = useFlowEdges(); // 使用动态生成的连线数组
@@ -350,24 +482,7 @@ export function useAutoLayout() {
     // ========== 步骤1: 计算反向层级 ==========
     const reverseLevels = calculateReverseLevel(nodes, edges);
     
-    // ========== 步骤2: 使用dagre计算初始水平布局 ==========
-    const dagreGraph = new dagre.graphlib.Graph();
-    dagreGraph.setDefaultEdgeLabel(() => ({}));
-    
-    // 系统性解决遮挡：动态计算水平间距
-    // 节点宽 200，我们希望间距至少是宽度的 80%
-    const dynamicNodeSep = Math.max(LAYOUT_CONFIG.minNodeSep, LAYOUT_CONFIG.baseNodeWidth * 0.8);
-    
-    dagreGraph.setGraph({ 
-      rankdir: 'TB',
-      nodesep: dynamicNodeSep,
-      ranksep: LAYOUT_CONFIG.baseRankSep,
-      marginx: 100,
-      marginy: 50,
-      align: 'DL'
-    });
-
-    // 计算每个节点的输入边
+    // ========== 步骤2: 计算每个节点的输入边 ==========
     const nodeIncomingEdges: Record<string, typeof edges> = {};
     edges.forEach(edge => {
       if (!nodeIncomingEdges[edge.target]) {
@@ -376,17 +491,50 @@ export function useAutoLayout() {
       nodeIncomingEdges[edge.target].push(edge);
     });
 
-    // 计算节点宽度和高度（使用动态估算）
+    // ========== 步骤3: 计算节点宽度和高度（使用分档策略和动态估算） ==========
     const calculatedNodeWidths: Record<string, number> = {};
     const calculatedNodeHeights: Record<string, number> = {};
+    
+    // 第一遍：计算宽度（基于输入数量）
     nodes.forEach(node => {
       const incoming = nodeIncomingEdges[node.id] || [];
       const inputCount = incoming.length;
-      const width = inputCount > 3 ? Math.max(200, inputCount * 80) : 200;
-      const height = estimateNodeHeight(node);
+      const width = calculateTieredWidth(inputCount);
       calculatedNodeWidths[node.id] = width;
+    });
+    
+    // 第二遍：基于宽度计算高度（考虑换行）
+    nodes.forEach(node => {
+      const width = calculatedNodeWidths[node.id];
+      const height = estimateNodeHeight(node, width);
       calculatedNodeHeights[node.id] = height;
-      dagreGraph.setNode(node.id, { width, height });
+    });
+    
+    // ========== 步骤4: 使用dagre计算初始水平布局 ==========
+    const dagreGraph = new dagre.graphlib.Graph();
+    dagreGraph.setDefaultEdgeLabel(() => ({}));
+    
+    // 计算动态节点间距（基于平均宽度，更紧凑）
+    const nodeWidths = Object.values(calculatedNodeWidths);
+    const avgNodeWidth = nodeWidths.reduce((a, b) => a + b, 0) / nodeWidths.length;
+    // 使用平均宽度的40%作为间距（从0.8降至0.4，减少50%）
+    const dynamicNodeSep = Math.max(LAYOUT_CONFIG.minNodeSep, avgNodeWidth * 0.4);
+    
+    dagreGraph.setGraph({ 
+      rankdir: 'TB',
+      nodesep: dynamicNodeSep,
+      ranksep: LAYOUT_CONFIG.baseRankSep,
+      marginx: 100,
+      marginy: 50,
+      // 移除 align: 'DL'，使用中心对齐
+    });
+    
+    // 添加节点到 dagre graph
+    nodes.forEach(node => {
+      dagreGraph.setNode(node.id, { 
+        width: calculatedNodeWidths[node.id], 
+        height: calculatedNodeHeights[node.id] 
+      });
     });
 
     // 添加边到 dagre graph
@@ -404,7 +552,7 @@ export function useAutoLayout() {
       initialPositions[node.id] = { x: pos.x, y: pos.y };
     });
 
-    // ========== 步骤3: 按反向层级重新计算Y坐标 ==========
+    // ========== 步骤5: 按反向层级重新计算Y坐标 ==========
     const levelGroups = groupByLevel(nodes, reverseLevels);
     // 反向层级：level 0是终点（最底层），level越大越靠上
     // 所以从大到小排序，从顶层到底层
@@ -422,11 +570,25 @@ export function useAutoLayout() {
         // 系统性解决垂直遮挡：使用上一层的最大节点高度
         const prevLevel = levelKeys[index - 1];
         const prevLevelNodes = levelGroups[prevLevel];
-        const maxPrevHeight = Math.max(...prevLevelNodes.map(n => calculatedNodeHeights[n.id] || estimateNodeHeight(n)));
+        const maxPrevHeight = Math.max(...prevLevelNodes.map(n => {
+          const cachedHeight = calculatedNodeHeights[n.id];
+          if (cachedHeight) return cachedHeight;
+          // 如果缓存中没有，使用当前宽度重新估算
+          const width = calculatedNodeWidths[n.id] || LAYOUT_CONFIG.baseNodeWidth;
+          return estimateNodeHeight(n, width);
+        }));
         
-        // 层间距 = 上一层最大高度 + 安全边距(60px)
+        // 层间距 = 上一层最大高度的一半（因为Y坐标是中心点）+ 下一层最大高度的一半 + 安全边距
         // 这确保了即使节点内容撑高，也不会遮挡下一层
-        const baseSpacing = maxPrevHeight + 60;
+        const currentLevelMaxHeight = Math.max(...levelNodes.map(n => {
+          const cachedHeight = calculatedNodeHeights[n.id];
+          if (cachedHeight) return cachedHeight;
+          const width = calculatedNodeWidths[n.id] || LAYOUT_CONFIG.baseNodeWidth;
+          return estimateNodeHeight(n, width);
+        }));
+        
+        // 箭头长度 = 上一层底部到下一层顶部的距离
+        const baseSpacing = (maxPrevHeight / 2) + (currentLevelMaxHeight / 2) + 60;
         
         // 如果当前层有多个输入，增加额外间距
         const maxInputNode = levelNodes.reduce((max, node) => {
@@ -451,7 +613,18 @@ export function useAutoLayout() {
       });
     });
 
-    // ========== 步骤4: 对汇聚节点应用加权居中与顺序修正 ==========
+    // ========== 步骤5.5: 压缩并行分支间距 ==========
+    // 在dagre布局后，压缩同一层级内无直接连接的并行节点间距
+    compressParallelBranches(
+      nodes,
+      edges,
+      reverseLevels,
+      nodePositions,
+      calculatedNodeWidths,
+      0.65 // 压缩到标准间距的65%
+    );
+
+    // ========== 步骤6: 对汇聚节点应用加权居中与顺序修正 ==========
     
     // 1. 先进行投料顺序修正，确保 X 坐标物理顺序与 sequenceOrder 一致
     // 系统性解决交叉：整分支平移，确保上游分支随直接父节点一起移动
@@ -478,7 +651,7 @@ export function useAutoLayout() {
       });
     }
 
-    // ========== 步骤5: 为边分配 targetHandle ==========
+    // ========== 步骤7: 为边分配 targetHandle ==========
     const updatedEdges = edges.map(edge => {
       const incoming = nodeIncomingEdges[edge.target] || [];
       if (incoming.length <= 1) return edge;
@@ -505,7 +678,7 @@ export function useAutoLayout() {
       if (!pos) return;
       
       const width = calculatedNodeWidths[node.id] || LAYOUT_CONFIG.baseNodeWidth;
-      const height = calculatedNodeHeights[node.id] || estimateNodeHeight(node);
+      const height = calculatedNodeHeights[node.id] || estimateNodeHeight(node, width);
       
       // 保存位置（以节点左上角为基准，ReactFlow 使用左上角坐标）
       finalPositions[node.id] = {

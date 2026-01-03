@@ -168,6 +168,17 @@ export interface RecipeSchema {
  * 1. 汇总节点（折叠模式）：显示工艺段汇总信息
  * 2. 子步骤节点（展开模式）：显示单个子步骤详情
  */
+/**
+ * 输入来源信息（用于调配节点显示进料顺序）
+ */
+export interface InputSource {
+  nodeId: string;           // 来源节点ID
+  name: string;              // 来源名称（子步骤名称或工艺段名称）
+  processId: string;         // 来源工艺段ID
+  processName: string;       // 来源工艺段名称
+  sequenceOrder: number;     // 投料顺序序号
+}
+
 export interface FlowNode {
   id: string;        // 节点ID: "P1" (汇总节点) 或 "P1-substep-1" (子步骤节点)
   type: 'processSummaryNode' | 'subStepNode'; // 节点类型
@@ -180,6 +191,8 @@ export interface FlowNode {
     isExpanded?: boolean;
     // 子步骤节点数据
     subStep?: SubStep;
+    // 输入来源信息（主要用于调配节点）
+    inputSources?: InputSource[];
   };
 }
 

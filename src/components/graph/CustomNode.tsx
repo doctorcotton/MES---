@@ -25,8 +25,17 @@ const formatTemperature = (temp: { min?: number; max?: number; unit: string }) =
   return '常温';
 };
 
+/**
+ * 根据输入数量计算分档宽度
+ */
+const getTieredWidth = (inputCount: number): number => {
+  if (inputCount <= 2) return 200;
+  if (inputCount <= 4) return 280;
+  return 360;
+};
+
 // 渲染子步骤参数内容
-const renderSubStepParams = (subStep: SubStep) => {
+const renderSubStepParams = (subStep: SubStep, inputSources?: FlowNode['data']['inputSources']) => {
   switch (subStep.processType) {
     case ProcessType.DISSOLUTION:
       if ('dissolutionParams' in subStep.params) {
@@ -56,6 +65,23 @@ const renderSubStepParams = (subStep: SubStep) => {
         const speedStr = formatConditionValue(params.stirringSpeed);
         return (
           <div className="space-y-1">
+            {/* 进料顺序列表 */}
+            {inputSources && inputSources.length > 0 && (
+              <div className="mb-2 pb-2 border-b border-gray-200">
+                <div className="text-xs font-semibold text-gray-800 mb-1">进料顺序:</div>
+                <div className="space-y-0.5">
+                  {inputSources.map((source, idx) => (
+                    <div key={source.nodeId} className="text-xs text-gray-700">
+                      <span className="font-medium">{source.sequenceOrder}.</span>{' '}
+                      <span>{source.name}</span>
+                      {source.processName && (
+                        <span className="text-gray-500 ml-1">({source.processName})</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="text-xs text-gray-700">
               <span className="font-medium">添加物:</span> {params.additives.length}项
             </div>
@@ -154,6 +180,9 @@ export const CustomNode = memo(({ id, data, selected, type }: NodeProps<CustomNo
     const firstSubStep = process?.node.subSteps[0];
     const headerColor = firstSubStep ? getNodeHeaderColor(firstSubStep.processType) : 'bg-gray-500';
 
+    // 计算分档宽度
+    const nodeWidth = getTieredWidth(inputCount);
+
     return (
       <div
         className={cn(
@@ -161,7 +190,7 @@ export const CustomNode = memo(({ id, data, selected, type }: NodeProps<CustomNo
           isHovered ? 'border-blue-500 shadow-lg' : 'border-gray-300',
           selected && 'ring-2 ring-blue-400'
         )}
-        style={{ minWidth: '200px', width: '100%' }}
+        style={{ minWidth: `${nodeWidth}px`, width: `${nodeWidth}px` }}
         onClick={() => toggleProcessExpanded(data.processId!)}
       >
         {/* Header */}
@@ -212,6 +241,9 @@ export const CustomNode = memo(({ id, data, selected, type }: NodeProps<CustomNo
   if (isSubStepNode && data.subStep) {
     const subStep = data.subStep;
     const headerColor = getNodeHeaderColor(subStep.processType);
+    
+    // 计算分档宽度
+    const nodeWidth = getTieredWidth(inputCount);
 
     return (
       <div
@@ -220,7 +252,7 @@ export const CustomNode = memo(({ id, data, selected, type }: NodeProps<CustomNo
           isHovered ? 'border-blue-500 shadow-lg' : 'border-gray-300',
           selected && 'ring-2 ring-blue-400'
         )}
-        style={{ minWidth: '200px', width: '100%' }}
+        style={{ minWidth: `${nodeWidth}px`, width: `${nodeWidth}px` }}
       >
         {/* Header */}
         <div className={cn('rounded-t-lg px-3 py-2', headerColor)}>
@@ -231,14 +263,14 @@ export const CustomNode = memo(({ id, data, selected, type }: NodeProps<CustomNo
         </div>
 
         {/* Body */}
-        <div className="px-3 py-2 space-y-1">
+        <div className="px-3 py-2 space-y-1 whitespace-normal break-words">
           <div className="text-xs text-gray-600">
-            <span className="font-medium">位置:</span> {subStep.deviceCode}
+            <span className="font-medium">位置:</span> <span className="break-words">{subStep.deviceCode}</span>
           </div>
           <div className="text-xs text-gray-600">
-            <span className="font-medium">原料:</span> {subStep.ingredients}
+            <span className="font-medium">原料:</span> <span className="break-words">{subStep.ingredients}</span>
           </div>
-          {renderSubStepParams(subStep)}
+          {renderSubStepParams(subStep, data.inputSources)}
         </div>
 
         {/* Handles */}

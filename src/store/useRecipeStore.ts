@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { RecipeEdge, RecipeSchema, Process, SubStep, FlowNode } from '../types/recipe';
+import { RecipeEdge, RecipeSchema, Process, SubStep, FlowNode, ProcessType } from '../types/recipe';
 import { initialProcesses, initialEdges } from '../data/initialData';
 
 interface RecipeStore {
@@ -375,16 +375,19 @@ export const useFlowNodes = (): FlowNode[] => {
   
   const nodes: FlowNode[] = [];
   
+  // 先收集所有节点（临时数组，用于查找输入来源）
+  const tempNodes: FlowNode[] = [];
+  
   processes.forEach(process => {
     const isExpanded = expandedProcesses.has(process.id);
     
     if (isExpanded) {
       // 展开模式：每个子步骤一个节点
       process.node.subSteps.forEach((subStep) => {
-        nodes.push({
+        tempNodes.push({
           id: subStep.id,
           type: 'subStepNode',
-          position: nodePositions[subStep.id] || { x: 0, y: 0 }, // 从缓存读取位置
+          position: nodePositions[subStep.id] || { x: 0, y: 0 },
           data: {
             subStep,
           },
@@ -392,10 +395,10 @@ export const useFlowNodes = (): FlowNode[] => {
       });
     } else {
       // 折叠模式：一个汇总节点
-      nodes.push({
+      tempNodes.push({
         id: process.id,
         type: 'processSummaryNode',
-        position: nodePositions[process.id] || { x: 0, y: 0 }, // 从缓存读取位置
+        position: nodePositions[process.id] || { x: 0, y: 0 },
         data: {
           processId: process.id,
           processName: process.name,
@@ -404,6 +407,56 @@ export const useFlowNodes = (): FlowNode[] => {
         },
       });
     }
+  });
+  
+  // 生成流程边（用于查找输入来源）
+  const flowEdges = useFlowEdges();
+  
+  // 为每个节点添加输入来源信息（特别是调配节点）
+  tempNodes.forEach(node => {
+    // 查找所有指向当前节点的边
+    const incomingEdges = flowEdges.filter(e => e.target === node.id);
+    
+    // 如果是调配节点，收集输入来源信息
+    if (node.type === 'subStepNode' && 
+        node.data.subStep?.processType === ProcessType.COMPOUNDING && 
+        incomingEdges.length > 0) {
+      const inputSources = incomingEdges
+        .map(edge => {
+          // 找到源节点
+          const sourceNode = tempNodes.find(n => n.id === edge.source);
+          if (!sourceNode) return null;
+          
+          // 获取来源名称
+          let sourceName = '';
+          if (sourceNode.type === 'subStepNode' && sourceNode.data.subStep) {
+            sourceName = sourceNode.data.subStep.label;
+          } else if (sourceNode.type === 'processSummaryNode') {
+            sourceName = sourceNode.data.processName || sourceNode.data.processId || '';
+          }
+          
+          // 获取来源工艺段信息
+          const sourceProcess = processes.find(p => {
+            if (p.id === edge.source) return true;
+            return p.node.subSteps.some(s => s.id === edge.source);
+          });
+          
+          return {
+            nodeId: edge.source,
+            name: sourceName,
+            processId: sourceProcess?.id || '',
+            processName: sourceProcess?.name || '',
+            sequenceOrder: edge.data?.sequenceOrder || 0,
+          };
+        })
+        .filter((source): source is NonNullable<typeof source> => source !== null)
+        .sort((a, b) => a.sequenceOrder - b.sequenceOrder); // 按顺序排序
+      
+      // 添加到节点数据中
+      node.data.inputSources = inputSources;
+    }
+    
+    nodes.push(node);
   });
   
   return nodes;
