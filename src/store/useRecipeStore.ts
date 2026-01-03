@@ -529,5 +529,41 @@ export const useFlowEdges = (): RecipeEdge[] => {
     }
   });
   
-  return flowEdges;
+  // ========== 新增：为多输入节点分配targetHandle ==========
+  
+  // 1. 统计每个节点的输入边
+  const nodeIncomingEdges = new Map<string, RecipeEdge[]>();
+  flowEdges.forEach(edge => {
+    const edges = nodeIncomingEdges.get(edge.target) || [];
+    edges.push(edge);
+    nodeIncomingEdges.set(edge.target, edges);
+  });
+  
+  // 2. 为多输入节点的边分配targetHandle
+  const finalEdges = flowEdges.map(edge => {
+    const incomingEdges = nodeIncomingEdges.get(edge.target) || [];
+    
+    // 如果只有1个输入，不需要指定targetHandle（使用默认handle）
+    if (incomingEdges.length <= 1) {
+      return edge;
+    }
+    
+    // 多输入节点：按sequenceOrder排序，分配targetHandle
+    const sortedEdges = [...incomingEdges].sort((a, b) => {
+      const orderA = a.data?.sequenceOrder || 0;
+      const orderB = b.data?.sequenceOrder || 0;
+      return orderA - orderB;
+    });
+    
+    // 找到当前边在排序后的索引
+    const handleIndex = sortedEdges.findIndex(e => e.id === edge.id);
+    
+    // 分配targetHandle（必须匹配CustomNode中的handle ID）
+    return {
+      ...edge,
+      targetHandle: handleIndex >= 0 ? `target-${handleIndex}` : undefined,
+    };
+  });
+  
+  return finalEdges;
 };

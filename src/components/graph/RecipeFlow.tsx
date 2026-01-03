@@ -31,6 +31,7 @@ export function RecipeFlow() {
   const { setSelectedNodeId } = useRecipeStore();
   const { mode, isEditable } = useCollabStore();
   const reactFlowInstance = useRef<ReactFlowInstance | null>(null);
+  const prevNodesSignatureRef = useRef<string>('');
   useAutoLayout();
   
   const isReadOnly = mode === 'view' && !isEditable();
@@ -40,14 +41,22 @@ export function RecipeFlow() {
     reactFlowInstance.current = instance;
   }, []);
 
-  // 当节点布局更新后，重新居中
+  // 当节点布局更新后，重新居中（只在节点真正变化时）
   useEffect(() => {
     if (reactFlowInstance.current && nodes.length > 0) {
-      // 延迟执行，确保布局计算完成
-      const timer = setTimeout(() => {
-        reactFlowInstance.current?.fitView({ padding: 0.1, maxZoom: 1.5, minZoom: 0.5 });
-      }, 300);
-      return () => clearTimeout(timer);
+      // 计算节点签名：节点ID的排序数组，用于检测节点是否真正变化
+      const nodesSignature = JSON.stringify([...nodes.map(n => n.id)].sort());
+      
+      // 只有当节点签名真正变化时才调用 fitView
+      if (prevNodesSignatureRef.current !== nodesSignature) {
+        prevNodesSignatureRef.current = nodesSignature;
+        
+        // 延迟执行，确保布局计算完成
+        const timer = setTimeout(() => {
+          reactFlowInstance.current?.fitView({ padding: 0.1, maxZoom: 1.5, minZoom: 0.5 });
+        }, 300);
+        return () => clearTimeout(timer);
+      }
     }
   }, [nodes]);
 

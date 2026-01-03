@@ -380,6 +380,182 @@ function groupByLevel(
 }
 
 /**
+ * 改进贪心聚类算法（最优解）
+ * 关键改进：检查组内最大差异，避免不合理分组
+ */
+function improvedClusterSimilarSizes(
+  sizes: { id: string; value: number }[],
+  threshold: number = 0.15,
+  minGroupSize: number = 1
+): Map<string, number> {
+  if (sizes.length === 0) return new Map();
+  if (sizes.length === 1) {
+    return new Map([[sizes[0].id, sizes[0].value]]);
+  }
+  
+  // 按尺寸从小到大排序
+  const sorted = [...sizes].sort((a, b) => a.value - b.value);
+  
+  // 聚类分组
+  const clusters: Array<{ 
+    ids: string[]; 
+    minValue: number;
+    maxValue: number;
+  }> = [];
+  
+  let currentCluster = {
+    ids: [sorted[0].id],
+    minValue: sorted[0].value,
+    maxValue: sorted[0].value
+  };
+  
+  for (let i = 1; i < sorted.length; i++) {
+    const current = sorted[i];
+    
+    // 关键改进：检查加入后组内最大差异
+    const newMaxValue = current.value;
+    const groupSpan = (newMaxValue - currentCluster.minValue) / currentCluster.minValue;
+    
+    // 如果组内差异仍在阈值内，归入当前组
+    if (groupSpan <= threshold) {
+      currentCluster.ids.push(current.id);
+      currentCluster.maxValue = newMaxValue;
+    } else {
+      // 差异过大，创建新组
+      clusters.push(currentCluster);
+      currentCluster = {
+        ids: [current.id],
+        minValue: current.value,
+        maxValue: current.value
+      };
+    }
+  }
+  clusters.push(currentCluster);
+  
+  // 单节点合并策略（可选）
+  if (minGroupSize >= 2) {
+    mergeSingletonClusters(clusters, threshold);
+  }
+  
+  // 构建映射：节点ID -> 统一尺寸（使用组内最大值）
+  const result = new Map<string, number>();
+  clusters.forEach(cluster => {
+    cluster.ids.forEach(id => {
+      result.set(id, cluster.maxValue);
+    });
+  });
+  
+  return result;
+}
+
+/**
+ * 合并单节点到最近的组
+ * 减少碎片化，提高统一效果
+ */
+function mergeSingletonClusters(
+  clusters: Array<{ 
+    ids: string[]; 
+    minValue: number;
+    maxValue: number;
+  }>,
+  threshold: number
+): void {
+  // 从后向前处理，避免索引问题
+  for (let i = clusters.length - 1; i >= 0; i--) {
+    if (clusters[i].ids.length === 1) {
+      const singletonValue = clusters[i].minValue;
+      let merged = false;
+      
+      // 尝试合并到前一组
+      if (i > 0) {
+        const prevCluster = clusters[i - 1];
+        const diffToPrev = (singletonValue - prevCluster.minValue) / prevCluster.minValue;
+        
+        // 稍微放宽阈值（1.5倍），优先合并
+        if (diffToPrev <= threshold * 1.5) {
+          prevCluster.ids.push(...clusters[i].ids);
+          prevCluster.maxValue = Math.max(prevCluster.maxValue, singletonValue);
+          clusters.splice(i, 1);
+          merged = true;
+          continue;
+        }
+      }
+      
+      // 如果没合并成功，尝试合并到后一组
+      if (!merged && i < clusters.length - 1) {
+        const nextCluster = clusters[i + 1];
+        const diffToNext = (nextCluster.maxValue - singletonValue) / singletonValue;
+        
+        if (diffToNext <= threshold * 1.5) {
+          nextCluster.ids.push(...clusters[i].ids);
+          nextCluster.minValue = Math.min(nextCluster.minValue, singletonValue);
+          clusters.splice(i, 1);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * 计算智能统一尺寸
+ * 先按类型分组，组内使用改进贪心算法聚类
+ */
+function calculateIntelligentUnifiedSizes(
+  nodes: FlowNode[],
+  initialWidths: Record<string, number>,
+  initialHeights: Record<string, number>
+): {
+  unifiedWidths: Map<string, number>;
+  unifiedHeights: Map<string, number>;
+} {
+  // 按工艺类型分组
+  const nodesByType: Record<ProcessType, FlowNode[]> = {
+    [ProcessType.DISSOLUTION]: [],
+    [ProcessType.COMPOUNDING]: [],
+    [ProcessType.FILTRATION]: [],
+    [ProcessType.TRANSFER]: [],
+    [ProcessType.FLAVOR_ADDITION]: [],
+    [ProcessType.OTHER]: []
+  };
+  
+  nodes.forEach(node => {
+    if (node.type === 'subStepNode' && node.data.subStep) {
+      const type = node.data.subStep.processType;
+      nodesByType[type].push(node);
+    }
+  });
+  
+  const unifiedWidths = new Map<string, number>();
+  const unifiedHeights = new Map<string, number>();
+  
+  // 对每个类型组进行智能聚类
+  Object.values(nodesByType).forEach((typeNodes) => {
+    if (typeNodes.length === 0) return;
+    
+    // 收集该类型所有节点的宽度和高度
+    const widthData = typeNodes.map(node => ({
+      id: node.id,
+      value: initialWidths[node.id]
+    }));
+    
+    const heightData = typeNodes.map(node => ({
+      id: node.id,
+      value: initialHeights[node.id]
+    }));
+    
+    // 改进贪心聚类宽度（阈值15%，启用单节点合并）
+    const clusteredWidths = improvedClusterSimilarSizes(widthData, 0.15, 2);
+    clusteredWidths.forEach((width, id) => unifiedWidths.set(id, width));
+    
+    // 改进贪心聚类高度（阈值20%，高度变化容忍度更高）
+    const clusteredHeights = improvedClusterSimilarSizes(heightData, 0.20, 2);
+    clusteredHeights.forEach((height, id) => unifiedHeights.set(id, height));
+  });
+  
+  return { unifiedWidths, unifiedHeights };
+}
+
+/**
  * 压缩并行分支的水平间距
  * 识别同一层级内无直接连接关系的节点，应用更紧凑的间距
  */
@@ -491,23 +667,40 @@ export function useAutoLayout() {
       nodeIncomingEdges[edge.target].push(edge);
     });
 
-    // ========== 步骤3: 计算节点宽度和高度（使用分档策略和动态估算） ==========
-    const calculatedNodeWidths: Record<string, number> = {};
-    const calculatedNodeHeights: Record<string, number> = {};
+    // ========== 步骤3: 计算初始尺寸（使用分档策略和动态估算） ==========
+    const initialWidths: Record<string, number> = {};
+    const initialHeights: Record<string, number> = {};
     
     // 第一遍：计算宽度（基于输入数量）
     nodes.forEach(node => {
       const incoming = nodeIncomingEdges[node.id] || [];
       const inputCount = incoming.length;
       const width = calculateTieredWidth(inputCount);
-      calculatedNodeWidths[node.id] = width;
+      initialWidths[node.id] = width;
     });
     
     // 第二遍：基于宽度计算高度（考虑换行）
     nodes.forEach(node => {
-      const width = calculatedNodeWidths[node.id];
+      const width = initialWidths[node.id];
       const height = estimateNodeHeight(node, width);
-      calculatedNodeHeights[node.id] = height;
+      initialHeights[node.id] = height;
+    });
+    
+    // ========== 步骤3.5: 智能统一尺寸（新增） ==========
+    const { unifiedWidths, unifiedHeights } = calculateIntelligentUnifiedSizes(
+      nodes,
+      initialWidths,
+      initialHeights
+    );
+    
+    // ========== 步骤4: 应用统一尺寸 ==========
+    const calculatedNodeWidths: Record<string, number> = {};
+    const calculatedNodeHeights: Record<string, number> = {};
+    
+    nodes.forEach(node => {
+      // 优先使用统一尺寸，否则使用初始尺寸
+      calculatedNodeWidths[node.id] = unifiedWidths.get(node.id) || initialWidths[node.id];
+      calculatedNodeHeights[node.id] = unifiedHeights.get(node.id) || initialHeights[node.id];
     });
     
     // ========== 步骤4: 使用dagre计算初始水平布局 ==========
@@ -651,25 +844,8 @@ export function useAutoLayout() {
       });
     }
 
-    // ========== 步骤7: 为边分配 targetHandle ==========
-    const updatedEdges = edges.map(edge => {
-      const incoming = nodeIncomingEdges[edge.target] || [];
-      if (incoming.length <= 1) return edge;
-
-      // 按 Source 节点的布局 X 坐标排序，而不是 sequenceOrder
-      // 这能保证物理上从左到右进入，杜绝交叉
-      const sortedIncoming = [...incoming].sort((a, b) => {
-        const posXA = nodePositions[a.source]?.x || 0;
-        const posXB = nodePositions[b.source]?.x || 0;
-        return posXA - posXB;
-      });
-      
-      const handleIndex = sortedIncoming.findIndex(e => e.id === edge.id);
-      return {
-        ...edge,
-        targetHandle: `target-${handleIndex}`
-      };
-    });
+    // 注意：targetHandle 的分配已在 useFlowEdges 中完成，按 sequenceOrder 排序
+    // 这里不再需要重复分配
 
     // 计算最终位置（考虑节点宽度和高度，以节点中心为基准）
     const finalPositions: Record<string, { x: number; y: number }> = {};
