@@ -15,7 +15,7 @@ import { useCollabStore } from '@/store/useCollabStore';
 import { ConnectionModal } from './ConnectionModal';
 import { ParamsModal } from './ParamsModal';
 import { Plus, Trash2, Lock, ChevronDown, ChevronRight, Edit2 } from 'lucide-react';
-import { SubStep, ProcessType } from '@/types/recipe';
+import { SubStep, ProcessType, getEquipmentConfig, getMaterials } from '@/types/recipe';
 
 // 工艺类型中文映射
 const getProcessTypeLabel = (type: ProcessType): string => {
@@ -240,6 +240,9 @@ export function RecipeTable() {
               <TableHead>位置/设备</TableHead>
               <TableHead>原料/内容</TableHead>
               <TableHead>关键参数</TableHead>
+              <TableHead>预计耗时</TableHead>
+              <TableHead>调度约束</TableHead>
+
               <TableHead>下一步</TableHead>
               <TableHead className="w-[100px]">操作</TableHead>
             </TableRow>
@@ -255,7 +258,7 @@ export function RecipeTable() {
                   <TableRow
                     className="bg-slate-100 hover:bg-slate-200"
                   >
-                    <TableCell colSpan={9} className="py-2">
+                    <TableCell colSpan={11} className="py-2">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           <Button
@@ -402,7 +405,7 @@ export function RecipeTable() {
                               className={`${canEdit ? 'cursor-pointer hover:text-blue-600' : 'cursor-not-allowed opacity-60'}`}
                               onClick={() => canEdit && handleStartEditSubStep(subStep)}
                             >
-                              {subStep.deviceCode}
+                              {getEquipmentConfig(subStep)?.deviceCode || subStep.deviceCode}
                             </span>
                           )}
                         </TableCell>
@@ -426,7 +429,9 @@ export function RecipeTable() {
                               className={`text-xs ${canEdit ? 'cursor-pointer hover:text-blue-600' : 'cursor-not-allowed opacity-60'}`}
                               onClick={() => canEdit && handleStartEditSubStep(subStep)}
                             >
-                              {subStep.ingredients}
+                              {getMaterials(subStep).length > 0
+                                ? getMaterials(subStep).map(m => m.name).join('、')
+                                : subStep.ingredients}
                             </span>
                           )}
                         </TableCell>
@@ -449,6 +454,27 @@ export function RecipeTable() {
                             {formatSubStepParamsDisplay(subStep).substring(0, 20)}
                             {formatSubStepParamsDisplay(subStep).length > 20 ? '...' : ''}
                           </Button>
+                        </TableCell>
+                        <TableCell>
+                          <span className="text-xs text-gray-600">
+                            {subStep.estimatedDuration
+                              ? `${subStep.estimatedDuration.value}${subStep.estimatedDuration.unit}`
+                              : '-'}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col space-y-1">
+                            {subStep.deviceRequirement && (
+                              <span className="text-xs bg-purple-50 text-purple-700 px-1 py-0.5 rounded border border-purple-100 truncate max-w-[100px]" title="设备需求">
+                                {subStep.deviceRequirement.deviceCode || subStep.deviceRequirement.deviceType || '设备需求'}
+                              </span>
+                            )}
+                            {subStep.canParallelWith && subStep.canParallelWith.length > 0 && (
+                              <span className="text-xs bg-green-50 text-green-700 px-1 py-0.5 rounded border border-green-100" title="可并行">
+                                并行:{subStep.canParallelWith.length}
+                              </span>
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell>
                           {processConnections.length > 0 ? (
@@ -491,8 +517,8 @@ export function RecipeTable() {
       </div>
 
       <div className="border-t p-4">
-        <Button 
-          onClick={handleAddProcess} 
+        <Button
+          onClick={handleAddProcess}
           className="w-full"
           disabled={!canEdit}
           title={!canEdit ? '需要编辑权限或进入演示模式' : '添加工艺段'}

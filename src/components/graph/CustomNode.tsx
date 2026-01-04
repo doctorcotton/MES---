@@ -1,9 +1,9 @@
 import { memo } from 'react';
 import { Handle, Position, NodeProps } from 'reactflow';
+import { ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { FlowNode, SubStep, ProcessType } from '@/types/recipe';
-import { useRecipeStore, useFlowEdges } from '@/store/useRecipeStore';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { useRecipeStore, useFlowEdges, useRecipeSchedule } from '@/store/useRecipeStore';
 
 type CustomNodeData = FlowNode['data'];
 
@@ -70,7 +70,7 @@ const renderSubStepParams = (subStep: SubStep, inputSources?: FlowNode['data']['
               <div className="mb-2 pb-2 border-b border-gray-200">
                 <div className="text-xs font-semibold text-gray-800 mb-1">进料顺序:</div>
                 <div className="space-y-0.5">
-                  {inputSources.map((source, idx) => (
+                  {inputSources.map((source) => (
                     <div key={source.nodeId} className="text-xs text-gray-700">
                       <span className="font-medium">{source.sequenceOrder}.</span>{' '}
                       <span>{source.name}</span>
@@ -216,10 +216,10 @@ export const CustomNode = memo(({ id, data, selected, type }: NodeProps<CustomNo
           <Handle type="target" position={Position.Top} className="w-3 h-3 bg-gray-400" />
         ) : (
           Array.from({ length: inputCount }).map((_, index) => {
-            const leftPosition = inputCount > 1 
-              ? 15 + (index * (70 / (inputCount - 1))) 
+            const leftPosition = inputCount > 1
+              ? 15 + (index * (70 / (inputCount - 1)))
               : 50;
-            
+
             return (
               <Handle
                 key={`target-${index}`}
@@ -241,7 +241,7 @@ export const CustomNode = memo(({ id, data, selected, type }: NodeProps<CustomNo
   if (isSubStepNode && data.subStep) {
     const subStep = data.subStep;
     const headerColor = getNodeHeaderColor(subStep.processType);
-    
+
     // 计算分档宽度
     const nodeWidth = getTieredWidth(inputCount);
 
@@ -271,6 +271,29 @@ export const CustomNode = memo(({ id, data, selected, type }: NodeProps<CustomNo
             <span className="font-medium">原料:</span> <span className="break-words">{subStep.ingredients}</span>
           </div>
           {renderSubStepParams(subStep, data.inputSources)}
+
+          {/* Scheduling Info */}
+          {(() => {
+            // eslint-disable-next-line react-hooks/rules-of-hooks
+            const { timeline } = useRecipeSchedule();
+            const occupancy = timeline.find((o: any) => o.stepId === subStep.id);
+
+            if (occupancy) {
+              return (
+                <div className="mt-2 pt-2 border-t border-dashed border-gray-300">
+                  <div className="text-xs text-purple-700 font-medium flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-purple-500"></span>
+                    {occupancy.deviceCode}
+                  </div>
+                  <div className="text-xs text-gray-500 ml-2.5">
+                    耗时: {occupancy.duration}min
+                    {occupancy.startTime > 0 && ` (T+${occupancy.startTime})`}
+                  </div>
+                </div>
+              );
+            }
+            return null;
+          })()}
         </div>
 
         {/* Handles */}
@@ -278,10 +301,10 @@ export const CustomNode = memo(({ id, data, selected, type }: NodeProps<CustomNo
           <Handle type="target" position={Position.Top} className="w-3 h-3 bg-gray-400" />
         ) : (
           Array.from({ length: inputCount }).map((_, index) => {
-            const leftPosition = inputCount > 1 
-              ? 15 + (index * (70 / (inputCount - 1))) 
+            const leftPosition = inputCount > 1
+              ? 15 + (index * (70 / (inputCount - 1)))
               : 50;
-            
+
             return (
               <Handle
                 key={`target-${index}`}

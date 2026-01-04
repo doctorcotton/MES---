@@ -1,4 +1,7 @@
-import { Process, ProcessNode, SubStep, RecipeEdge, ProcessType } from '../types/recipe';
+import { Process, RecipeEdge, ProcessType } from '../types/recipe';
+import { DeviceType } from '../types/equipment';
+import { MaterialRole } from '../types/material';
+import { migrateSubStepToV2 } from '../utils/migration';
 
 /**
  * 初始工艺段数据
@@ -31,7 +34,20 @@ export const initialProcesses: Process[] = [
               stirringRate: 'high',
               transferType: 'material'
             }
-          }
+          },
+          // 新增：新结构字段（手动定义或使用迁移工具）
+          equipmentV2: {
+            deviceCode: "高搅桶1",
+            deviceType: DeviceType.HIGH_SPEED_MIXER,
+            capacity: { value: 2000, unit: 'L' },
+          },
+          materialsV2: [
+            { id: "P1-mat-1", name: "RO水", role: MaterialRole.SOLVENT },
+            { id: "P1-mat-2", name: "赤藓糖醇", role: MaterialRole.SOLUTE },
+            { id: "P1-mat-3", name: "三氯蔗糖", role: MaterialRole.SOLUTE },
+          ],
+          operationsV2: [], // 暂时留空，可以使用 migrateSubStepToV2 自动生成
+          _migrated: true,
         },
         {
           id: "P1-substep-2",
@@ -64,7 +80,7 @@ export const initialProcesses: Process[] = [
       ]
     }
   },
-  
+
   // P2工艺段：维生素类、盐类、矿物质类溶解液
   {
     id: "P2",
@@ -124,7 +140,7 @@ export const initialProcesses: Process[] = [
       ]
     }
   },
-  
+
   // P3工艺段：维生素E+部分赤藓溶解液
   {
     id: "P3",
@@ -186,7 +202,7 @@ export const initialProcesses: Process[] = [
       ]
     }
   },
-  
+
   // P4工艺段：酸类溶解液
   {
     id: "P4",
@@ -248,7 +264,7 @@ export const initialProcesses: Process[] = [
       ]
     }
   },
-  
+
   // P5工艺段：香精添加
   {
     id: "P5",
@@ -276,7 +292,7 @@ export const initialProcesses: Process[] = [
       ]
     }
   },
-  
+
   // P6工艺段：调配定容
   {
     id: "P6",
@@ -315,7 +331,7 @@ export const initialProcesses: Process[] = [
       ]
     }
   },
-  
+
   // P7工艺段：UHT灭菌
   {
     id: "P7",
@@ -341,7 +357,7 @@ export const initialProcesses: Process[] = [
       ]
     }
   },
-  
+
   // P8工艺段：灌装
   {
     id: "P8",
@@ -367,7 +383,7 @@ export const initialProcesses: Process[] = [
       ]
     }
   },
-  
+
   // 后处理工艺段：最终过滤、磁棒吸附、无菌罐
   {
     id: "PostProcessing",
@@ -432,11 +448,24 @@ export const initialEdges: RecipeEdge[] = [
   { id: "e3", source: "P3", target: "P6", type: "sequenceEdge", data: { sequenceOrder: 4 } },
   { id: "e4", source: "P4", target: "P6", type: "sequenceEdge", data: { sequenceOrder: 5 } },
   { id: "e5", source: "P5", target: "P6", type: "sequenceEdge", data: { sequenceOrder: 6 } },
-  
+
   // P6到后处理
   { id: "e6", source: "P6", target: "PostProcessing", type: "sequenceEdge", data: { sequenceOrder: 1 } },
-  
+
   // 后处理到P7和P8
   { id: "e7", source: "PostProcessing", target: "P7", type: "sequenceEdge", data: { sequenceOrder: 1 } },
   { id: "e8", source: "P7", target: "P8", type: "sequenceEdge", data: { sequenceOrder: 1 } }
 ];
+
+/**
+ * 自动迁移所有未迁移的数据（开发时使用）
+ */
+export function autoMigrateAllProcesses(): Process[] {
+  return initialProcesses.map(process => ({
+    ...process,
+    node: {
+      ...process.node,
+      subSteps: process.node.subSteps.map(migrateSubStepToV2),
+    },
+  }));
+}

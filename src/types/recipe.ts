@@ -1,3 +1,11 @@
+import { EquipmentConfig, DeviceType } from './equipment';
+import { MaterialSpec, MaterialRole } from './material';
+import { Operation, TimeValue } from './operation';
+import { DeviceRequirement } from './scheduling';
+
+// Temporary fix for missing type
+type RecipeNode = any;
+
 /**
  * 工艺类型枚举
  */
@@ -125,6 +133,21 @@ export interface SubStep {
   deviceCode: string;            // 设备编号: "高搅桶1"
   ingredients: string;           // 原料描述
   params: ProcessNodeData;       // 工艺参数（根据processType动态）
+
+  // === 新字段（可选，逐步迁移） ===
+  equipmentV2?: EquipmentConfig;      // 设备配置（新结构）
+  materialsV2?: MaterialSpec[];       // 物料清单（新结构）
+  operationsV2?: Operation[];         // 操作序列（新结构）
+
+  // === 调度相关（新） ===
+  deviceRequirement?: DeviceRequirement;    // 设备资源需求
+  canParallelWith?: string[];              // 可以并行的步骤ID列表
+  mustAfter?: string[];                     // 必须在某些步骤之后执行
+  estimatedDuration?: TimeValue;           // 预计耗时（用于调度）
+
+  // === 迁移辅助字段 ===
+  _migrated?: boolean;               // 是否已迁移到新结构
+  _migrationSource?: string;          // 迁移来源（用于调试）
 }
 
 /**
@@ -257,4 +280,51 @@ export function findProcessBySubStepId(processes: Process[], subStepId: string):
  */
 export function extractProcessNodes(processes: Process[]): ProcessNode[] {
   return processes.map(process => process.node);
+}
+
+/**
+ * 工具函数：检查是否已迁移
+ */
+export function isSubStepMigrated(subStep: SubStep): boolean {
+  return subStep._migrated === true &&
+    subStep.equipmentV2 !== undefined &&
+    subStep.materialsV2 !== undefined &&
+    subStep.operationsV2 !== undefined;
+}
+
+/**
+ * 工具函数：获取设备配置（兼容新旧）
+ */
+export function getEquipmentConfig(subStep: SubStep): EquipmentConfig | null {
+  if (subStep.equipmentV2) {
+    return subStep.equipmentV2;
+  }
+  // 从旧字段构建
+  if (subStep.deviceCode) {
+    return {
+      deviceCode: subStep.deviceCode,
+      deviceType: DeviceType.OTHER,  // 默认类型
+    };
+  }
+  return null;
+}
+
+/**
+ * 工具函数：获取物料列表（兼容新旧）
+ */
+export function getMaterials(subStep: SubStep): MaterialSpec[] {
+  if (subStep.materialsV2) {
+    return subStep.materialsV2;
+  }
+  // 从旧字段解析（简单解析 ingredients 字符串）
+  if (subStep.ingredients && subStep.ingredients !== '-') {
+    // 简单解析：按逗号分割
+    const separator = subStep.ingredients.includes('、') ? '、' : ',';
+    return subStep.ingredients.split(separator).map((name, idx) => ({
+      id: `${subStep.id}-mat-${idx}`,
+      name: name.trim(),
+      role: MaterialRole.SOLUTE,  // 默认角色
+    }));
+  }
+  return [];
 }

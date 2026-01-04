@@ -1,14 +1,14 @@
 import { io, Socket } from 'socket.io-client';
-import { RecipeSchema } from '../types/recipe';
 
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001';
+
+const SOCKET_URL = (import.meta as any).env.VITE_SOCKET_URL || 'http://localhost:3001';
 
 class SocketService {
   private socket: Socket | null = null;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
 
-  connect(userId: string, userName: string): Socket {
+  connect(_userId: string, _userName: string): Socket {
     // 如果已连接，直接返回现有socket
     if (this.socket?.connected) {
       return this.socket;

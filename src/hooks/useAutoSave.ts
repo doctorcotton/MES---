@@ -1,14 +1,14 @@
 import { useEffect, useRef } from 'react';
 import { useRecipeStore } from '../store/useRecipeStore';
 import { useCollabStore } from '../store/useCollabStore';
-import { socketService } from '../services/socketService';
+
 
 const SAVE_DEBOUNCE = 3000; // 3秒防抖
 
 export function useAutoSave() {
   const { processes, edges, metadata, version, setSaving } = useRecipeStore();
   const { mode, userId, isEditable } = useCollabStore();
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     // 只在编辑模式下自动保存

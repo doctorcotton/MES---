@@ -6,7 +6,7 @@ import { RecipeSchema } from '../types/recipe';
 
 export function useDemoMode() {
   const { mode, setMode } = useCollabStore();
-  const { processes, edges, metadata, setNodes, setEdges, exportJSON, syncFromServer } = useRecipeStore();
+  const { processes, edges, metadata, exportJSON, syncFromServer } = useRecipeStore();
   const isDemoMode = mode === 'demo';
 
   // 进入演示模式时保存服务器数据快照
@@ -36,7 +36,7 @@ export function useDemoMode() {
           // 向后兼容：如果快照是旧格式（nodes），需要迁移
           if (serverSnapshotRef.current.processes) {
             // 新格式直接使用
-            syncFromServer(serverSnapshotRef.current, serverSnapshotRef.current.version || 1);
+            syncFromServer(serverSnapshotRef.current, (serverSnapshotRef.current as any).version || 1);
           } else if ((serverSnapshotRef.current as any).nodes) {
             // 旧格式，通过syncFromServer自动迁移
             syncFromServer(serverSnapshotRef.current as any, (serverSnapshotRef.current as any).version || 1);
@@ -48,7 +48,7 @@ export function useDemoMode() {
       // 使用快照恢复
       if (serverSnapshotRef.current) {
         if (serverSnapshotRef.current.processes) {
-          syncFromServer(serverSnapshotRef.current, serverSnapshotRef.current.version || 1);
+          syncFromServer(serverSnapshotRef.current, (serverSnapshotRef.current as any).version || 1);
         } else if ((serverSnapshotRef.current as any).nodes) {
           syncFromServer(serverSnapshotRef.current as any, (serverSnapshotRef.current as any).version || 1);
         }

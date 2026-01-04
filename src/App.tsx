@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { Panel, Group, Separator } from 'react-resizable-panels';
 import { AppLayout } from './components/layout/AppLayout';
 import { RecipeTable } from './components/editor/RecipeTable';
 import { RecipeFlow } from './components/graph/RecipeFlow';
@@ -58,15 +59,23 @@ function App() {
 
   return (
     <AppLayout>
-      {/* Left Panel - 40% */}
-      <div className="w-[40%] border-r bg-slate-50">
-        <RecipeTable />
-      </div>
+      <Group orientation="horizontal">
+        {/* Left Panel - Recipe Table */}
+        <Panel defaultSize={40} minSize={20}>
+          <div className="h-full border-r bg-slate-50">
+            <RecipeTable />
+          </div>
+        </Panel>
 
-      {/* Right Panel - 60% */}
-      <div className="w-[60%] bg-white">
-        <RecipeFlow />
-      </div>
+        <Separator className="w-1 bg-slate-200 hover:bg-blue-500 transition-colors cursor-col-resize" />
+
+        {/* Right Panel - Flow Graph */}
+        <Panel defaultSize={60} minSize={20}>
+          <div className="h-full bg-white">
+            <RecipeFlow />
+          </div>
+        </Panel>
+      </Group>
     </AppLayout>
   );
 }

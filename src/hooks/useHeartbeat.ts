@@ -6,7 +6,7 @@ const HEARTBEAT_INTERVAL = 10000; // 10秒
 
 export function useHeartbeat() {
   const { mode } = useCollabStore();
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const socket = socketService.getSocket();

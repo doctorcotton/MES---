@@ -1,6 +1,10 @@
 import { create } from 'zustand';
 import { RecipeEdge, RecipeSchema, Process, SubStep, FlowNode, ProcessType } from '../types/recipe';
 import { initialProcesses, initialEdges } from '../data/initialData';
+import { calculateSchedule } from '../services/scheduler'; // calculateSchedule returned from here
+import { ScheduleResult } from '../types/scheduling'; // ScheduleResult is a type definition
+import { defaultDevicePool } from '../data/devicePool';
+import { useMemo } from 'react';
 
 interface RecipeStore {
   // 主数据结构：工艺段列表
@@ -15,10 +19,10 @@ interface RecipeStore {
   selectedNodeId: string | null;
   version: number; // 乐观锁版本号
   isSaving: boolean; // 保存状态
-  
+
   // 展开/折叠状态管理（用于流程图）
   expandedProcesses: Set<string>; // 记录哪些工艺段在流程图中展开显示子步骤
-  
+
   // 节点位置缓存（用于流程图布局）
   nodePositions: Record<string, { x: number; y: number }>; // 缓存计算好的节点位置
 
@@ -26,36 +30,36 @@ interface RecipeStore {
   addProcess: (process: Process) => void;
   updateProcess: (id: string, data: Partial<Omit<Process, 'id' | 'node'>>) => void;
   removeProcess: (id: string) => void;
-  
+
   // 展开/折叠操作
   toggleProcessExpanded: (processId: string) => void;
   setProcessExpanded: (processId: string, expanded: boolean) => void;
-  
+
   // 子步骤管理
   addSubStep: (processId: string, subStep: SubStep) => void;
   updateSubStep: (processId: string, subStepId: string, data: Partial<SubStep>) => void;
   removeSubStep: (processId: string, subStepId: string) => void;
   reorderSubSteps: (processId: string, newOrder: string[]) => void;
-  
+
   // Edge actions
   addEdge: (edge: RecipeEdge) => void;
   updateEdge: (id: string, data: Partial<RecipeEdge['data']>) => void;
   removeEdge: (id: string) => void;
   cleanupEdges: (processId: string) => void;
-  
+
   // Interaction
   setHoveredNodeId: (id: string | null) => void;
   setSelectedNodeId: (id: string | null) => void;
-  
+
   // Import/Export
   exportJSON: () => string;
   importJSON: (json: string) => void;
   reset: () => void;
-  
+
   // Collaboration
   syncFromServer: (schema: RecipeSchema, version: number) => void;
   setSaving: (saving: boolean) => void;
-  
+
   // Layout
   setNodePositions: (positions: Record<string, { x: number; y: number }>) => void;
 }
@@ -105,7 +109,7 @@ export const useRecipeStore = create<RecipeStore>((set, get) => ({
     const state = get();
     // 级联删除该Process的连线
     state.cleanupEdges(id);
-    
+
     set((state) => ({
       processes: state.processes.filter((process) => process.id !== id),
       expandedProcesses: new Set([...state.expandedProcesses].filter(pid => pid !== id)),
@@ -147,12 +151,12 @@ export const useRecipeStore = create<RecipeStore>((set, get) => ({
       processes: state.processes.map((process) =>
         process.id === processId
           ? {
-              ...process,
-              node: {
-                ...process.node,
-                subSteps: [...process.node.subSteps, subStep],
-              },
-            }
+            ...process,
+            node: {
+              ...process.node,
+              subSteps: [...process.node.subSteps, subStep],
+            },
+          }
           : process
       ),
       metadata: {
@@ -167,16 +171,16 @@ export const useRecipeStore = create<RecipeStore>((set, get) => ({
       processes: state.processes.map((process) =>
         process.id === processId
           ? {
-              ...process,
-              node: {
-                ...process.node,
-                subSteps: process.node.subSteps.map((subStep) =>
-                  subStep.id === subStepId
-                    ? { ...subStep, ...data }
-                    : subStep
-                ),
-              },
-            }
+            ...process,
+            node: {
+              ...process.node,
+              subSteps: process.node.subSteps.map((subStep) =>
+                subStep.id === subStepId
+                  ? { ...subStep, ...data }
+                  : subStep
+              ),
+            },
+          }
           : process
       ),
       metadata: {
@@ -191,12 +195,12 @@ export const useRecipeStore = create<RecipeStore>((set, get) => ({
       processes: state.processes.map((process) =>
         process.id === processId
           ? {
-              ...process,
-              node: {
-                ...process.node,
-                subSteps: process.node.subSteps.filter((subStep) => subStep.id !== subStepId),
-              },
-            }
+            ...process,
+            node: {
+              ...process.node,
+              subSteps: process.node.subSteps.filter((subStep) => subStep.id !== subStepId),
+            },
+          }
           : process
       ),
       metadata: {
@@ -221,12 +225,12 @@ export const useRecipeStore = create<RecipeStore>((set, get) => ({
         processes: state.processes.map((p) =>
           p.id === processId
             ? {
-                ...p,
-                node: {
-                  ...p.node,
-                  subSteps: reorderedSubSteps,
-                },
-              }
+              ...p,
+              node: {
+                ...p.node,
+                subSteps: reorderedSubSteps,
+              },
+            }
             : p
         ),
         metadata: {
@@ -372,15 +376,15 @@ export const useFlowNodes = (): FlowNode[] => {
   const processes = useRecipeStore((state) => state.processes);
   const expandedProcesses = useRecipeStore((state) => state.expandedProcesses);
   const nodePositions = useRecipeStore((state) => state.nodePositions);
-  
+
   const nodes: FlowNode[] = [];
-  
+
   // 先收集所有节点（临时数组，用于查找输入来源）
   const tempNodes: FlowNode[] = [];
-  
+
   processes.forEach(process => {
     const isExpanded = expandedProcesses.has(process.id);
-    
+
     if (isExpanded) {
       // 展开模式：每个子步骤一个节点
       process.node.subSteps.forEach((subStep) => {
@@ -408,25 +412,25 @@ export const useFlowNodes = (): FlowNode[] => {
       });
     }
   });
-  
+
   // 生成流程边（用于查找输入来源）
   const flowEdges = useFlowEdges();
-  
+
   // 为每个节点添加输入来源信息（特别是调配节点）
   tempNodes.forEach(node => {
     // 查找所有指向当前节点的边
     const incomingEdges = flowEdges.filter(e => e.target === node.id);
-    
+
     // 如果是调配节点，收集输入来源信息
-    if (node.type === 'subStepNode' && 
-        node.data.subStep?.processType === ProcessType.COMPOUNDING && 
-        incomingEdges.length > 0) {
+    if (node.type === 'subStepNode' &&
+      node.data.subStep?.processType === ProcessType.COMPOUNDING &&
+      incomingEdges.length > 0) {
       const inputSources = incomingEdges
         .map(edge => {
           // 找到源节点
           const sourceNode = tempNodes.find(n => n.id === edge.source);
           if (!sourceNode) return null;
-          
+
           // 获取来源名称
           let sourceName = '';
           if (sourceNode.type === 'subStepNode' && sourceNode.data.subStep) {
@@ -434,13 +438,13 @@ export const useFlowNodes = (): FlowNode[] => {
           } else if (sourceNode.type === 'processSummaryNode') {
             sourceName = sourceNode.data.processName || sourceNode.data.processId || '';
           }
-          
+
           // 获取来源工艺段信息
           const sourceProcess = processes.find(p => {
             if (p.id === edge.source) return true;
             return p.node.subSteps.some(s => s.id === edge.source);
           });
-          
+
           return {
             nodeId: edge.source,
             name: sourceName,
@@ -451,14 +455,14 @@ export const useFlowNodes = (): FlowNode[] => {
         })
         .filter((source): source is NonNullable<typeof source> => source !== null)
         .sort((a, b) => a.sequenceOrder - b.sequenceOrder); // 按顺序排序
-      
+
       // 添加到节点数据中
       node.data.inputSources = inputSources;
     }
-    
+
     nodes.push(node);
   });
-  
+
   return nodes;
 };
 
@@ -469,23 +473,23 @@ export const useFlowEdges = (): RecipeEdge[] => {
   const processes = useRecipeStore((state) => state.processes);
   const edges = useRecipeStore((state) => state.edges);
   const expandedProcesses = useRecipeStore((state) => state.expandedProcesses);
-  
+
   const flowEdges: RecipeEdge[] = [];
-  
+
   // 处理工艺段间连线
   edges.forEach(edge => {
     const sourceProcess = processes.find(p => p.id === edge.source);
     const targetProcess = processes.find(p => p.id === edge.target);
-    
+
     if (!sourceProcess || !targetProcess) return;
-    
+
     const sourceExpanded = expandedProcesses.has(sourceProcess.id);
     const targetExpanded = expandedProcesses.has(targetProcess.id);
-    
+
     // 确定源节点和目标节点
     let sourceNodeId: string;
     let targetNodeId: string;
-    
+
     if (sourceExpanded) {
       // 源工艺段展开：连接到最后一个子步骤
       const lastSubStep = sourceProcess.node.subSteps[sourceProcess.node.subSteps.length - 1];
@@ -494,7 +498,7 @@ export const useFlowEdges = (): RecipeEdge[] => {
       // 源工艺段折叠：连接到汇总节点
       sourceNodeId = sourceProcess.id;
     }
-    
+
     if (targetExpanded) {
       // 目标工艺段展开：从第一个子步骤连接
       const firstSubStep = targetProcess.node.subSteps[0];
@@ -503,14 +507,14 @@ export const useFlowEdges = (): RecipeEdge[] => {
       // 目标工艺段折叠：连接到汇总节点
       targetNodeId = targetProcess.id;
     }
-    
+
     flowEdges.push({
       ...edge,
       source: sourceNodeId,
       target: targetNodeId,
     });
   });
-  
+
   // 生成工艺段内部连线（仅当展开时）
   processes.forEach(process => {
     if (expandedProcesses.has(process.id) && process.node.subSteps.length > 1) {
@@ -528,9 +532,9 @@ export const useFlowEdges = (): RecipeEdge[] => {
       }
     }
   });
-  
+
   // ========== 新增：为多输入节点分配targetHandle ==========
-  
+
   // 1. 统计每个节点的输入边
   const nodeIncomingEdges = new Map<string, RecipeEdge[]>();
   flowEdges.forEach(edge => {
@@ -538,32 +542,46 @@ export const useFlowEdges = (): RecipeEdge[] => {
     edges.push(edge);
     nodeIncomingEdges.set(edge.target, edges);
   });
-  
+
   // 2. 为多输入节点的边分配targetHandle
   const finalEdges = flowEdges.map(edge => {
     const incomingEdges = nodeIncomingEdges.get(edge.target) || [];
-    
+
     // 如果只有1个输入，不需要指定targetHandle（使用默认handle）
     if (incomingEdges.length <= 1) {
       return edge;
     }
-    
+
     // 多输入节点：按sequenceOrder排序，分配targetHandle
     const sortedEdges = [...incomingEdges].sort((a, b) => {
       const orderA = a.data?.sequenceOrder || 0;
       const orderB = b.data?.sequenceOrder || 0;
       return orderA - orderB;
     });
-    
+
     // 找到当前边在排序后的索引
     const handleIndex = sortedEdges.findIndex(e => e.id === edge.id);
-    
+
     // 分配targetHandle（必须匹配CustomNode中的handle ID）
     return {
       ...edge,
       targetHandle: handleIndex >= 0 ? `target-${handleIndex}` : undefined,
     };
   });
-  
+
   return finalEdges;
+};
+
+/**
+ * Hook: 获取当前的调度结果
+ * 基于当前的工艺步骤和默认设备池计算
+ */
+export const useRecipeSchedule = (): ScheduleResult => {
+  const processes = useRecipeStore((state) => state.processes);
+
+  const schedule = useMemo(() => {
+    return calculateSchedule(processes, defaultDevicePool);
+  }, [processes]);
+
+  return schedule;
 };
