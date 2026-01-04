@@ -195,16 +195,35 @@ PORT=3001
 
 ## 部署
 
-### 前端部署
+### GitHub Pages 部署（前端）
 
-构建后的文件在 `dist/` 目录，可部署到任何静态文件服务器（如 Nginx、Vercel、Netlify）。
+项目已配置 GitHub Actions 自动部署到 GitHub Pages。详细步骤请参考 [DEPLOYMENT.md](./DEPLOYMENT.md)。
+
+**快速开始：**
+
+1. 推送代码到 GitHub 仓库
+2. 在仓库 Settings → Pages 中启用 GitHub Actions
+3. 推送代码到 `main` 分支，自动触发部署
+
+**注意**：如果后端部署在其他服务器，需要在 GitHub Secrets 中设置 `VITE_SOCKET_URL`。
+
+### 前端静态部署
+
+构建后的文件在 `dist/` 目录，可部署到任何静态文件服务器：
+- GitHub Pages（已配置自动部署）
+- Vercel
+- Netlify
+- 自有服务器（Nginx、Apache 等）
 
 ### 后端部署
 
-1. 构建项目：`cd server && npm run build`
-2. 启动服务：`npm start`
-3. 建议使用 PM2 或类似工具管理进程
-4. 配置反向代理（如 Nginx）处理 WebSocket 连接
+后端需要 Node.js 服务器，不能静态部署。推荐平台：
+- Railway（推荐，WebSocket 支持好）
+- Render
+- Vercel（可能需要付费计划）
+- 自有服务器（VPS、云服务器）
+
+详细部署指南请参考 [DEPLOYMENT.md](./DEPLOYMENT.md)。
 
 ### 生产环境配置
 

@@ -13,4 +13,9 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  // GitHub Pages 部署配置
+  // 如果仓库名不是根路径，需要设置 base
+  // 例如：base: '/MES---/' （替换为你的仓库名）
+  // 如果部署在自定义域名，可以设置为 '/'
+  base: process.env.GITHUB_PAGES === 'true' ? '/MES---/' : '/',
 })
