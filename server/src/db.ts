@@ -202,11 +202,21 @@ export function createFieldConfig(config: FieldConfig): boolean {
             @isSystem, @enabled, @createdAt, @updatedAt
         )
     `).run({
-    ...config,
+    id: config.id,
+    processType: config.processType,
+    key: config.key,
+    label: config.label,
+    inputType: config.inputType,
+    unit: config.unit || null,
     options: config.options ? JSON.stringify(config.options) : null,
     defaultValue: config.defaultValue !== undefined ? JSON.stringify(config.defaultValue) : null,
     validation: config.validation ? JSON.stringify(config.validation) : null,
     displayCondition: config.displayCondition ? JSON.stringify(config.displayCondition) : null,
+    sortOrder: config.sortOrder || 0,
+    isSystem: config.isSystem ? 1 : 0,
+    enabled: config.enabled ? 1 : 0,
+    createdAt: config.createdAt || new Date().toISOString(),
+    updatedAt: config.updatedAt || new Date().toISOString()
   });
   return result.changes > 0;
 }

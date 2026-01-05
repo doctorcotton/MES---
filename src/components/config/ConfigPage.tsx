@@ -25,8 +25,8 @@ import {
     SubStepTemplate,
     ProcessSegmentTemplate,
     getProcessTypeName,
-    PROCESS_TYPE_FIELDS,
 } from '@/types/processTypeConfig';
+import { useFieldConfigStore } from '@/store/useFieldConfigStore';
 import { FieldConfigEditor } from './FieldConfigEditor';
 
 export function ConfigPage() {
@@ -40,6 +40,7 @@ export function ConfigPage() {
         removeProcessSegmentTemplate,
         resetToDefaults,
     } = useProcessTypeConfigStore();
+    const { getConfigsByProcessType } = useFieldConfigStore();
 
     const [editingSubStep, setEditingSubStep] = useState<ProcessType | null>(null);
     const [editingSegment, setEditingSegment] = useState<string | null>(null);
@@ -50,7 +51,8 @@ export function ConfigPage() {
     // 开始编辑子步骤模板
     const handleEditSubStep = (type: ProcessType) => {
         const template = subStepTemplates[type];
-        const allFields = PROCESS_TYPE_FIELDS[type].map(f => f.key);
+        const processFields = getConfigsByProcessType(type);
+        const allFields = processFields.map(f => f.key);
         setEditingSubStep(type);
         setEditSubStepValues({
             label: template.label,
@@ -163,7 +165,7 @@ export function ConfigPage() {
                                 <TableBody>
                                     {Object.values(ProcessType).map((type) => {
                                         const template = subStepTemplates[type];
-                                        const fields = PROCESS_TYPE_FIELDS[type];
+                                        const fields = getConfigsByProcessType(type);
                                         return (
                                             <TableRow key={type}>
                                                 <TableCell className="font-medium">{getProcessTypeName(type)}</TableCell>
@@ -296,7 +298,7 @@ export function ConfigPage() {
                                     选择启用的字段（去除勾选将隐藏该字段）
                                 </div>
                                 <div className="bg-gray-50 p-3 rounded-md space-y-2 max-h-60 overflow-y-auto">
-                                    {PROCESS_TYPE_FIELDS[editingSubStep].map((field, idx) => {
+                                    {getConfigsByProcessType(editingSubStep).map((field, idx) => {
                                         const isEnabled = (editSubStepValues.enabledFields || []).includes(field.key);
                                         return (
                                             <label
@@ -324,7 +326,7 @@ export function ConfigPage() {
                                                         <div className="text-xs text-gray-500">
                                                             类型: {field.inputType}
                                                             {field.unit && ` | 单位: ${field.unit}`}
-                                                            {field.required && ' | 必填'}
+                                                            {field.validation?.required && ' | 必填'}
                                                         </div>
                                                     </div>
                                                     {field.options && (
@@ -338,7 +340,7 @@ export function ConfigPage() {
                                     })}
                                 </div>
                                 <div className="text-xs text-gray-500 mt-2">
-                                    已启用 {(editSubStepValues.enabledFields || []).length} / {PROCESS_TYPE_FIELDS[editingSubStep].length} 个字段
+                                    已启用 {(editSubStepValues.enabledFields || []).length} / {getConfigsByProcessType(editingSubStep).length} 个字段
                                 </div>
                             </div>
                         )}

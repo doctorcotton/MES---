@@ -21,7 +21,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useRecipeStore } from '@/store/useRecipeStore';
 import { ProcessType, getEquipmentConfig, getMaterials } from '@/types/recipe';
 import { MaterialSpec } from '@/types/material';
-import { PROCESS_TYPE_FIELDS } from '@/types/processTypeConfig';
+
 
 import { useFieldConfigStore } from '@/store/useFieldConfigStore';
 import { DynamicFormRenderer } from '@/components/common/DynamicForm/DynamicFormRenderer';
@@ -65,70 +65,59 @@ export function ParamsModal({ nodeId, open, onOpenChange }: ParamsModalProps) {
     const relevantConfigs = getConfigsByProcessType(subStep.processType);
     if (relevantConfigs.length > 0) {
       setCurrentConfigs(relevantConfigs);
-    } else {
-      // Fallback to hardcoded configs
-      const fallbackConfigs = PROCESS_TYPE_FIELDS[subStep.processType]?.map((f, index) => ({
-        id: `fallback-${f.key}`,
-        processType: subStep.processType,
-        key: f.key,
-        label: f.label,
-        inputType: f.inputType,
-        unit: f.unit,
-        options: f.options,
-        defaultValue: f.defaultValue,
-        validation: { required: f.required },
-        sortOrder: index,
-        isSystem: true,
-        enabled: true,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      })) || [];
-      setCurrentConfigs(fallbackConfigs);
-    }
+      if (relevantConfigs.length > 0) {
+        setCurrentConfigs(relevantConfigs);
+      } else {
+        // If no configs found for this type, set empty.
+        // Ideally, the DB sync should have ensured configs exist.
+        // We log a warning if needed for debugging.
+        console.warn(`No field configs found for process type: ${subStep.processType}`);
+        setCurrentConfigs([]);
+      }
 
-    // Initial data loading
-    const equipmentV2 = getEquipmentConfig(subStep);
-    const materialsV2 = getMaterials(subStep);
-    const operationsV2 = subStep.operationsV2;
+      // Initial data loading
+      const equipmentV2 = getEquipmentConfig(subStep);
+      const materialsV2 = getMaterials(subStep);
+      const operationsV2 = subStep.operationsV2;
 
-    const commonV2 = {
-      equipmentV2,
-      materialsV2,
-      operationsV2,
-    };
+      const commonV2 = {
+        equipmentV2,
+        materialsV2,
+        operationsV2,
+      };
 
-    // Scheduling data
-    const schedulingData = {
-      deviceRequirement: subStep.deviceRequirement,
-      estimatedDuration: subStep.estimatedDuration,
-      canParallelWith: subStep.canParallelWith,
-      mustAfter: subStep.mustAfter
-    };
+      // Scheduling data
+      const schedulingData = {
+        deviceRequirement: subStep.deviceRequirement,
+        estimatedDuration: subStep.estimatedDuration,
+        canParallelWith: subStep.canParallelWith,
+        mustAfter: subStep.mustAfter
+      };
 
-    // Load params
-    const paramKey = PARAM_KEYS[subStep.processType];
-    const params: any = (subStep.params as any)[paramKey] || {};
+      // Load params
+      const paramKey = PARAM_KEYS[subStep.processType];
+      const params: any = (subStep.params as any)[paramKey] || {};
 
-    // Flatten params for form: { key: value }
-    // Since DynamicFormRenderer expects keys to match config keys
-    // And store param object structure matches config keys (mostly)
-    // We can just spread params. 
-    // EXCEPT "params" for OTHER type is a string, handle that.
+      // Flatten params for form: { key: value }
+      // Since DynamicFormRenderer expects keys to match config keys
+      // And store param object structure matches config keys (mostly)
+      // We can just spread params. 
+      // EXCEPT "params" for OTHER type is a string, handle that.
 
-    let formParams = {};
-    if (subStep.processType === ProcessType.OTHER) {
-      formParams = { params: (subStep.params as any).params };
-    } else {
-      formParams = { ...params };
-    }
+      let formParams = {};
+      if (subStep.processType === ProcessType.OTHER) {
+        formParams = { params: (subStep.params as any).params };
+      } else {
+        formParams = { ...params };
+      }
 
-    setFormData({
-      ...commonV2,
-      ...schedulingData,
-      ...formParams
-    });
+      setFormData({
+        ...commonV2,
+        ...schedulingData,
+        ...formParams
+      });
 
-  }, [subStep, process, open, configs]); // Added configs dependency
+    }, [subStep, process, open, configs]); // Added configs dependency
 
   const handleSave = () => {
     if (!subStep || !process) return;

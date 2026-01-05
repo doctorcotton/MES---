@@ -4,6 +4,8 @@ import { ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { FlowNode, SubStep, ProcessType } from '@/types/recipe';
 import { useRecipeStore, useFlowEdges, useRecipeSchedule } from '@/store/useRecipeStore';
+import { useFieldConfigStore } from '@/store/useFieldConfigStore';
+import { FieldConfig } from '@/types/fieldConfig';
 
 type CustomNodeData = FlowNode['data'];
 
@@ -34,117 +36,107 @@ const getTieredWidth = (inputCount: number): number => {
   return 360;
 };
 
-// 渲染子步骤参数内容
-const renderSubStepParams = (subStep: SubStep, inputSources?: FlowNode['data']['inputSources']) => {
-  switch (subStep.processType) {
-    case ProcessType.DISSOLUTION:
-      if ('dissolutionParams' in subStep.params) {
-        const params = subStep.params.dissolutionParams;
-        const tempStr = formatTemperature(params.waterTemp);
-        const volumeStr = formatConditionValue(params.waterVolume);
-        const rateMap: Record<string, string> = { high: '高速', medium: '中速', low: '低速' };
-        return (
-          <div className="space-y-1">
-            <div className="text-xs text-gray-700">
-              <span className="font-medium">水量:</span> {volumeStr}
-            </div>
-            <div className="text-xs text-gray-700">
-              <span className="font-medium">水温:</span> {tempStr}
-            </div>
-            <div className="text-xs text-gray-700">
-              <span className="font-medium">搅拌:</span> {rateMap[params.stirringRate]} {params.stirringTime.value}{params.stirringTime.unit}
-            </div>
-          </div>
-        );
-      }
-      break;
+// 渲染子步骤参数内容 - Dynamic Version
+const SubStepParamsDisplay = ({ subStep, inputSources }: { subStep: SubStep, inputSources?: FlowNode['data']['inputSources'] }) => {
+  const { getConfigsByProcessType } = useFieldConfigStore();
+  const configs = getConfigsByProcessType(subStep.processType);
 
-    case ProcessType.COMPOUNDING:
-      if ('compoundingParams' in subStep.params) {
-        const params = subStep.params.compoundingParams;
-        const speedStr = formatConditionValue(params.stirringSpeed);
-        return (
-          <div className="space-y-1">
-            {/* 进料顺序列表 */}
-            {inputSources && inputSources.length > 0 && (
-              <div className="mb-2 pb-2 border-b border-gray-200">
-                <div className="text-xs font-semibold text-gray-800 mb-1">进料顺序:</div>
-                <div className="space-y-0.5">
-                  {inputSources.map((source) => (
-                    <div key={source.nodeId} className="text-xs text-gray-700">
-                      <span className="font-medium">{source.sequenceOrder}.</span>{' '}
-                      <span>{source.name}</span>
-                      {source.processName && (
-                        <span className="text-gray-500 ml-1">({source.processName})</span>
-                      )}
-                    </div>
-                  ))}
-                </div>
+  // Helper to get value from nested params structure
+  const getParamValue = (key: string): any => {
+    const paramKeyMaps: Record<string, string> = {
+      [ProcessType.DISSOLUTION]: 'dissolutionParams',
+      [ProcessType.COMPOUNDING]: 'compoundingParams',
+      [ProcessType.FILTRATION]: 'filtrationParams',
+      [ProcessType.TRANSFER]: 'transferParams',
+      [ProcessType.FLAVOR_ADDITION]: 'flavorAdditionParams',
+    };
+
+    if (subStep.processType === ProcessType.OTHER) {
+      // OTHER uses 'params' directly as string, but handle if it becomes structured
+      if (key === 'params') return (subStep.params as any).params;
+      return null;
+    }
+
+    const groupKey = paramKeyMaps[subStep.processType];
+    if (!groupKey || !(subStep.params as any)[groupKey]) return null;
+    return (subStep.params as any)[groupKey][key];
+  };
+
+  // Special handling for Compounding input sources (presuming this is custom logic not in fields)
+  const renderCompoundingExtras = () => {
+    if (subStep.processType === ProcessType.COMPOUNDING && inputSources && inputSources.length > 0) {
+      return (
+        <div className="mb-2 pb-2 border-b border-gray-200">
+          <div className="text-xs font-semibold text-gray-800 mb-1">进料顺序:</div>
+          <div className="space-y-0.5">
+            {inputSources.map((source) => (
+              <div key={source.nodeId} className="text-xs text-gray-700">
+                <span className="font-medium">{source.sequenceOrder}.</span>{' '}
+                <span>{source.name}</span>
+                {source.processName && (
+                  <span className="text-gray-500 ml-1">({source.processName})</span>
+                )}
               </div>
-            )}
-            <div className="text-xs text-gray-700">
-              <span className="font-medium">添加物:</span> {params.additives.length}项
-            </div>
-            <div className="text-xs text-gray-700">
-              <span className="font-medium">搅拌:</span> {speedStr} {params.stirringTime.value}{params.stirringTime.unit}
-            </div>
+            ))}
           </div>
-        );
-      }
-      break;
+        </div>
+      );
+    }
+    return null;
+  };
 
-    case ProcessType.FILTRATION:
-      if ('filtrationParams' in subStep.params) {
-        const params = subStep.params.filtrationParams;
-        return (
-          <div className="text-xs text-gray-700">
-            <span className="font-medium">精度:</span> {params.precision.value}{params.precision.unit}
-          </div>
-        );
-      }
-      break;
 
-    case ProcessType.TRANSFER:
-      if ('transferParams' in subStep.params) {
-        const params = subStep.params.transferParams;
-        const transferMap: Record<string, string> = { material: '料赶料', water: '水赶料', none: '无' };
-        return (
-          <div className="space-y-1">
-            <div className="text-xs text-gray-700">
-              <span className="font-medium">类型:</span> {transferMap[params.transferType]}
-            </div>
-            {params.waterVolume && (
-              <div className="text-xs text-gray-700">
-                <span className="font-medium">水量:</span> {params.waterVolume.value}{params.waterVolume.unit}
-              </div>
-            )}
-          </div>
-        );
-      }
-      break;
+  const renderFieldValue = (config: FieldConfig, value: any) => {
+    if (value === undefined || value === null) return null;
 
-    case ProcessType.FLAVOR_ADDITION:
-      if ('flavorAdditionParams' in subStep.params) {
-        return (
-          <div className="text-xs text-gray-700">
-            <span className="font-medium">方式:</span> {subStep.params.flavorAdditionParams.method}
-          </div>
-        );
-      }
-      break;
+    let displayValue = '';
 
-    case ProcessType.OTHER:
-    default:
-      if ('params' in subStep.params && subStep.params.params) {
-        return (
-          <div className="text-xs text-gray-700 font-mono">
-            <span className="font-medium">参数:</span> {subStep.params.params}
-          </div>
-        );
+    if (config.inputType === 'select' && config.options) {
+      const opt = config.options.find((o: any) => o.value === value);
+      displayValue = opt ? opt.label : value;
+    } else if (config.inputType === 'conditionValue') {
+      displayValue = formatConditionValue(value);
+    } else if (config.inputType === 'range' || config.inputType === 'waterRatio') {
+      // Re-use formatTemperature logic but generic
+      if (value.min !== undefined && value.max !== undefined) {
+        displayValue = `${value.min}-${value.max}`;
+      } else if (value.min !== undefined) {
+        displayValue = `≥${value.min}`;
+      } else if (value.max !== undefined) {
+        displayValue = `≤${value.max}`;
       }
-      break;
+      if (config.unit) displayValue += config.unit;
+    } else {
+      // Text, number
+      displayValue = String(value);
+      if (config.unit) displayValue += config.unit;
+    }
+
+    return displayValue;
+  };
+
+  if (subStep.processType === ProcessType.OTHER) {
+    return (
+      <div className="text-xs text-gray-700 font-mono">
+        <span className="font-medium">参数:</span> {getParamValue('params')}
+      </div>
+    );
   }
-  return null;
+
+  return (
+    <div className="space-y-1">
+      {renderCompoundingExtras()}
+      {configs.map(config => {
+        const val = getParamValue(config.key);
+        if (val === undefined || val === null) return null;
+        return (
+          <div key={config.key} className="text-xs text-gray-700">
+            <span className="font-medium">{config.label}:</span> {renderFieldValue(config, val)}
+          </div>
+        );
+      })}
+    </div>
+  );
 };
 
 // 根据工艺类型获取节点头部颜色
@@ -271,7 +263,8 @@ export const CustomNode = memo(({ id, data, selected, type }: NodeProps<CustomNo
           <div className="text-xs text-gray-600">
             <span className="font-medium">原料:</span> <span className="break-words">{subStep.ingredients}</span>
           </div>
-          {renderSubStepParams(subStep, data.inputSources)}
+          {/* Use new component */}
+          <SubStepParamsDisplay subStep={subStep} inputSources={data.inputSources} />
 
           {/* Scheduling Info */}
           {(() => {

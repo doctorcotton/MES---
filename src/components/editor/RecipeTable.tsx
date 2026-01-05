@@ -43,7 +43,10 @@ import { Plus, Trash2, Lock, ChevronDown, ChevronRight, Edit2, Copy, ArrowUp, Ar
 import { SubStep, ProcessType, getEquipmentConfig, getMaterials, Process } from '@/types/recipe';
 import { DeviceType } from '@/types/equipment';
 import { DeviceRequirement } from '@/types/scheduling';
+import { DeviceRequirement } from '@/types/scheduling';
 import { useProcessTypeConfigStore } from '@/store/useProcessTypeConfigStore';
+import { useFieldConfigStore } from '@/store/useFieldConfigStore';
+import { FieldConfig } from '@/types/fieldConfig';
 
 // 工艺类型中文映射
 const getProcessTypeLabel = (type: ProcessType): string => {
@@ -537,81 +540,83 @@ export function RecipeTable() {
       });
   };
 
-  // 渲染子步骤参数显示
-  const renderSubStepParams = (subStep: SubStep) => {
-    switch (subStep.processType) {
-      case ProcessType.DISSOLUTION:
-        if ('dissolutionParams' in subStep.params) {
-          const p = subStep.params.dissolutionParams;
-          const temp = p.waterTemp.min !== undefined && p.waterTemp.max !== undefined
-            ? `${p.waterTemp.min}-${p.waterTemp.max}${p.waterTemp.unit}`
-            : '常温';
-          const volume = `${p.waterVolume.condition || ''}${p.waterVolume.value}${p.waterVolume.unit}`;
-          const rate = p.stirringRate === 'high' ? '高速' : p.stirringRate === 'medium' ? '中速' : '低速';
-          return (
-            <div className="flex flex-col gap-1 text-xs text-left">
-              <span className="font-medium text-slate-700">溶解参数:</span>
-              <span>水量: {volume}</span>
-              <span>水温: {temp}</span>
-              <span>搅拌: {rate} ({p.stirringTime.value}{p.stirringTime.unit})</span>
-            </div>
-          );
+  // 格式化条件值
+  const formatConditionValue = (value: { value: number; unit: string; condition?: string }) => {
+    if (!value) return '';
+    const condition = value.condition || '';
+    return `${condition}${value.value}${value.unit}`;
+  };
+
+  // 渲染子步骤参数显示 - Dynamic Component usage
+  const SubStepParamsCell = ({ subStep }: { subStep: SubStep }) => {
+    const { getConfigsByProcessType } = useFieldConfigStore();
+    const configs = getConfigsByProcessType(subStep.processType);
+
+    // Helper to get value from nested params structure - DUPLICATED LOGIC
+    // Ideally should be a helper util
+    const getParamValue = (key: string): any => {
+      const paramKeyMaps: Record<string, string> = {
+        [ProcessType.DISSOLUTION]: 'dissolutionParams',
+        [ProcessType.COMPOUNDING]: 'compoundingParams',
+        [ProcessType.FILTRATION]: 'filtrationParams',
+        [ProcessType.TRANSFER]: 'transferParams',
+        [ProcessType.FLAVOR_ADDITION]: 'flavorAdditionParams',
+      };
+
+      if (subStep.processType === ProcessType.OTHER) {
+        if (key === 'params') return (subStep.params as any).params;
+        return null;
+      }
+
+      const groupKey = paramKeyMaps[subStep.processType];
+      if (!groupKey || !(subStep.params as any)[groupKey]) return null;
+      return (subStep.params as any)[groupKey][key];
+    };
+
+    const renderFieldValue = (config: FieldConfig, value: any) => {
+      if (value === undefined || value === null) return null;
+
+      let displayValue = '';
+
+      if (config.inputType === 'select' && config.options) {
+        const opt = config.options.find((o: any) => o.value === value);
+        displayValue = opt ? opt.label : value;
+      } else if (config.inputType === 'conditionValue') {
+        displayValue = formatConditionValue(value);
+      } else if (config.inputType === 'range' || config.inputType === 'waterRatio') {
+        if (value.min !== undefined && value.max !== undefined) {
+          displayValue = `${value.min}-${value.max}`;
+        } else if (value.min !== undefined) {
+          displayValue = `≥${value.min}`;
+        } else if (value.max !== undefined) {
+          displayValue = `≤${value.max}`;
         }
-        break;
-      case ProcessType.COMPOUNDING:
-        if ('compoundingParams' in subStep.params) {
-          const p = subStep.params.compoundingParams;
-          const speed = `${p.stirringSpeed.condition || ''}${p.stirringSpeed.value}${p.stirringSpeed.unit}`;
-          return (
-            <div className="flex flex-col gap-1 text-xs text-left">
-              <span className="font-medium text-slate-700">调配参数:</span>
-              <span>添加物: {p.additives.length}项</span>
-              <span>搅拌: {speed} ({p.stirringTime.value}{p.stirringTime.unit})</span>
-              <span>温度: &lt;{p.finalTemp.max}{p.finalTemp.unit}</span>
-            </div>
-          );
-        }
-        break;
-      case ProcessType.FILTRATION:
-        if ('filtrationParams' in subStep.params) {
-          return (
-            <div className="flex flex-col gap-1 text-xs text-left">
-              <span className="font-medium text-slate-700">过滤参数:</span>
-              <span>精度: {subStep.params.filtrationParams.precision.value}{subStep.params.filtrationParams.precision.unit}</span>
-            </div>
-          );
-        }
-        break;
-      case ProcessType.TRANSFER:
-        if ('transferParams' in subStep.params) {
-          const p = subStep.params.transferParams;
-          const type = p.transferType === 'material' ? '料赶料' : p.transferType === 'water' ? '水赶料' : '无';
-          return (
-            <div className="flex flex-col gap-1 text-xs text-left">
-              <span className="font-medium text-slate-700">赶料参数:</span>
-              <span>类型: {type}</span>
-              {p.waterVolume && <span>水量: {p.waterVolume.value}{p.waterVolume.unit}</span>}
-            </div>
-          );
-        }
-        break;
-      case ProcessType.FLAVOR_ADDITION:
-        if ('flavorAdditionParams' in subStep.params) {
-          return (
-            <div className="flex flex-col gap-1 text-xs text-left">
-              <span className="font-medium text-slate-700">香精添加:</span>
-              <span>方式: {subStep.params.flavorAdditionParams.method}</span>
-            </div>
-          );
-        }
-        break;
-      case ProcessType.OTHER:
-        if ('params' in subStep.params && subStep.params.params) {
-          return <span className="text-xs text-left break-words">{subStep.params.params}</span>;
-        }
-        break;
+        if (config.unit) displayValue += config.unit;
+      } else if (config.inputType === 'number' || config.inputType === 'text') {
+        displayValue = String(value);
+        if (config.unit) displayValue += config.unit;
+      }
+      return displayValue;
+    };
+
+    if (subStep.processType === ProcessType.OTHER) {
+      return <span className="text-xs text-left break-words">{getParamValue('params')}</span>;
     }
-    return <span className="text-gray-400">-</span>;
+
+    return (
+      <div className="flex flex-col gap-1 text-xs text-left">
+        {configs.slice(0, 3).map(config => { // Limit to 3 fields for table view?
+          const val = getParamValue(config.key);
+          if (val === undefined || val === null) return null;
+          return (
+            <span key={config.key} className="truncate">
+              <span className="text-slate-500 mr-1">{config.label}:</span>
+              {renderFieldValue(config, val)}
+            </span>
+          );
+        })}
+      </div>
+    );
   };
 
   return (
@@ -788,7 +793,7 @@ export function RecipeTable() {
                                 <div className="flex items-start w-full">
                                   <Edit2 className="mr-2 h-3 w-3 mt-1 shrink-0 opacity-50" />
                                   <div className="flex-1">
-                                    {renderSubStepParams(subStep)}
+                                    <SubStepParamsCell subStep={subStep} />
                                   </div>
                                 </div>
                               </Button>
