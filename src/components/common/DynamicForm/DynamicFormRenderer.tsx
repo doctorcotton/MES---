@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { FieldConfig, FieldInputType } from '@/types/fieldConfig';
 import { shouldDisplayField, validateField } from '@/utils/fieldValidator';
+import { ArrayField } from './fields/ArrayField';
+import { ObjectField } from './fields/ObjectField';
 import { TextField } from './fields/TextField';
 import { NumberField } from './fields/NumberField';
 import { SelectField } from './fields/SelectField';
@@ -28,6 +30,8 @@ const FIELD_COMPONENTS: Record<string, React.FC<any>> = {
     'conditionValue': ConditionValueField,
     'range': RangeField,
     'waterRatio': WaterRatioField,
+    'array': ArrayField,
+    'object': ObjectField,
 };
 
 export const DynamicFormRenderer: React.FC<Props> = ({ configs, data, onChange }) => {
@@ -37,7 +41,7 @@ export const DynamicFormRenderer: React.FC<Props> = ({ configs, data, onChange }
         const newData = { ...data, [key]: value };
         onChange(newData);
 
-        // Clear error on change
+        // 更改时清除错误
         if (errors[key]) {
             setErrors(prev => {
                 const newErrors = { ...prev };

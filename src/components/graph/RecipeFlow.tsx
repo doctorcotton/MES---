@@ -32,6 +32,7 @@ export function RecipeFlow() {
   const { mode, isEditable } = useCollabStore();
   const reactFlowInstance = useRef<ReactFlowInstance | null>(null);
   const prevNodesSignatureRef = useRef<string>('');
+  const isInitialMountRef = useRef<boolean>(true);
   useAutoLayout();
 
   const isReadOnly = mode === 'view' && !isEditable();
@@ -43,20 +44,36 @@ export function RecipeFlow() {
 
   // 当节点布局更新后，重新居中（只在节点真正变化时）
   useEffect(() => {
-    if (reactFlowInstance.current && nodes.length > 0) {
-      // 计算节点签名：节点ID的排序数组，用于检测节点是否真正变化
-      const nodesSignature = JSON.stringify([...nodes.map(n => n.id)].sort());
+    if (!reactFlowInstance.current || nodes.length === 0) return;
 
-      // 只有当节点签名真正变化时才调用 fitView
-      if (prevNodesSignatureRef.current !== nodesSignature) {
-        prevNodesSignatureRef.current = nodesSignature;
+    // 计算节点签名：节点ID的排序数组，用于检测节点是否真正变化
+    const nodesSignature = JSON.stringify([...nodes.map(n => n.id)].sort());
 
-        // 延迟执行，确保布局计算完成
-        const timer = setTimeout(() => {
-          reactFlowInstance.current?.fitView({ padding: 0.1, maxZoom: 1.5, minZoom: 0.5 });
-        }, 300);
-        return () => clearTimeout(timer);
-      }
+    // 只有当节点签名真正变化时才调用 fitView
+    if (prevNodesSignatureRef.current !== nodesSignature) {
+      prevNodesSignatureRef.current = nodesSignature;
+
+      const isInitialMount = isInitialMountRef.current;
+      isInitialMountRef.current = false;
+
+      // 检查位置是否就绪（从 store 获取最新状态，避免闭包陷阱）
+      const nodePositions = useRecipeStore.getState().nodePositions;
+      const hasValidPositions = Object.keys(nodePositions).length > 0;
+
+      // 根据位置就绪状态选择延时策略
+      // 位置就绪时零延时，未就绪时 50ms 等待布局完成
+      const delay = hasValidPositions ? 0 : 50;
+
+      const timerId = setTimeout(() => {
+        reactFlowInstance.current?.fitView({
+          padding: 0.1,
+          maxZoom: 1.5,
+          minZoom: 0.5,
+          duration: isInitialMount ? 0 : 300 // 首次无动画，后续有动画
+        });
+      }, delay);
+
+      return () => clearTimeout(timerId);
     }
   }, [nodes]);
 

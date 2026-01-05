@@ -33,7 +33,7 @@ function generateUserName(): string {
   return names[Math.floor(Math.random() * names.length)] + Math.floor(Math.random() * 100);
 }
 
-// HTTP API
+// HTTP API 接口
 app.get('/api/recipe', (req, res) => {
   const recipe = getRecipe();
   if (!recipe) {
@@ -97,7 +97,7 @@ app.put('/api/recipe', (req, res) => {
 });
 
 
-// === Config API ===
+// === 配置 API ===
 
 app.get('/api/config/fields/type/:processType', (req, res) => {
   const configs = getFieldConfigs(req.params.processType);
@@ -112,12 +112,12 @@ app.get('/api/config/fields', (req, res) => {
 app.post('/api/config/fields', (req, res) => {
   const config = req.body;
 
-  // Basic validation
+  // 基本验证
   if (!config.processType || !config.key || !config.label || !config.inputType) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
-  // Generate ID if missing
+  // 如果缺少 ID 则生成
   if (!config.id) {
     config.id = uuidv4();
   }
@@ -126,7 +126,7 @@ app.post('/api/config/fields', (req, res) => {
   config.createdAt = now;
   config.updatedAt = now;
   config.enabled = config.enabled !== false; // Default true
-  config.isSystem = false; // API created fields are not system default
+  config.isSystem = false; // API 创建的字段不是系统默认字段
 
   try {
     const success = createFieldConfig(config);
@@ -154,6 +154,12 @@ app.put('/api/config/fields/:id', (req, res) => {
       res.status(404).json({ error: 'Config not found or no changes' });
     }
   } catch (err: any) {
+    console.error('Failed to update field config:', {
+      id,
+      updates,
+      error: err.message,
+      stack: err.stack
+    });
     res.status(500).json({ error: err.message });
   }
 });
@@ -165,7 +171,7 @@ app.delete('/api/config/fields/:id', (req, res) => {
     if (success) {
       res.json({ success: true });
     } else {
-      // Check if it failed because it's a system field
+      // 检查是否因为它是系统字段而失败
       const config = getFieldConfig(id);
       if (config && config.isSystem) {
         return res.status(403).json({ error: 'Cannot delete system field' });
@@ -178,7 +184,7 @@ app.delete('/api/config/fields/:id', (req, res) => {
 });
 
 app.post('/api/config/sync', (req, res) => {
-  // This is mainly for manual trigger/testing, migration runs on startup
+  // 这主要用于手动触发/测试，迁移在启动时运行
   try {
     const { syncDefaultFields } = require('./migrations/syncDefaultFields');
     syncDefaultFields();
@@ -189,11 +195,17 @@ app.post('/api/config/sync', (req, res) => {
 });
 // WebSocket连接
 io.on('connection', (socket) => {
-  const userId = generateUserId();
-  const userName = generateUserName();
+  // 优先使用客户端通过 auth 提供的 userId 和 userName
+  const clientUserId = socket.handshake.auth?.userId;
+  const clientUserName = socket.handshake.auth?.userName;
+
+  const userId = clientUserId || generateUserId();
+  const userName = clientUserName || generateUserName();
   const user = userManager.addUser(socket.id, userId, userName);
 
-  console.log(`用户连接: ${userName} (${userId}) - ${socket.id}`);
+  console.log(`用户连接: ${userName} (${userId}) - ${socket.id}`, {
+    fromClient: !!clientUserId,
+  });
 
   // 发送当前状态
   socket.emit('connected', {

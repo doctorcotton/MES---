@@ -6,7 +6,7 @@ import { RecipeSchema } from '../types/recipe';
 
 export function useSocketSync() {
   const { syncFromServer } = useRecipeStore();
-  const { setOnlineUsers, updateOnlineUser, removeOnlineUser, setLockStatus, setConnected } = useCollabStore();
+  const { setOnlineUsers, updateOnlineUser, removeOnlineUser, setLockStatus, setConnected, setUser } = useCollabStore();
   const listenersRegisteredRef = useRef(false);
 
   useEffect(() => {
@@ -24,6 +24,14 @@ export function useSocketSync() {
       onlineUsers: any[];
     }) => {
       setConnected(true);
+
+      // 关键修复:使用服务器返回的 userId 和 userName
+      setUser(data.userId, data.userName);
+
+      // 更新 localStorage 以保持一致性
+      localStorage.setItem('userId', data.userId);
+      localStorage.setItem('userName', data.userName);
+
       if (data.recipe) {
         syncFromServer(data.recipe, data.recipe.version || 1);
       }
@@ -95,5 +103,5 @@ export function useSocketSync() {
       socket.off('disconnect', handleDisconnect);
       listenersRegisteredRef.current = false;
     };
-  }, [syncFromServer, setOnlineUsers, updateOnlineUser, removeOnlineUser, setLockStatus, setConnected]);
+  }, [syncFromServer, setOnlineUsers, updateOnlineUser, removeOnlineUser, setLockStatus, setConnected, setUser]);
 }

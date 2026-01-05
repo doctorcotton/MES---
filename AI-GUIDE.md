@@ -25,6 +25,10 @@
 | 状态栏 | `src/components/collab/StatusBar.tsx` | 显示连接状态 |
 | **配置组件** | | |
 | 配置页面 | `src/components/config/ConfigPage.tsx` | `ConfigPage` 组件 - 工艺类型配置 |
+| 字段配置 | `src/components/config/FieldConfigEditor.tsx` | `FieldConfigEditor` - 动态字段定义编辑器 |
+| **动态表单** | | |
+| 表单渲染器 | `src/components/common/DynamicForm/DynamicFormRenderer.tsx` | `DynamicFormRenderer` - 基于配置生成表单 |
+| 字段组件 | `src/components/common/DynamicForm/fields/` | 各类字段组件 (`ArrayField`, `ObjectField` 等) |
 | **调度组件** | | |
 | 甘特图视图 | `src/components/scheduling/GanttView.tsx` | `GanttView` 组件 - 设备调度甘特图 |
 | 设备状态面板 | `src/components/scheduling/DeviceStatusPanel.tsx` | `DeviceStatusPanel` 组件 |
@@ -32,6 +36,7 @@
 | 配方数据 | `src/store/useRecipeStore.ts` | `useRecipeStore` - nodes, edges, metadata |
 | 协作状态 | `src/store/useCollabStore.ts` | `useCollabStore` - 编辑锁、在线用户 |
 | 工艺类型配置 | `src/store/useProcessTypeConfigStore.ts` | `useProcessTypeConfigStore` - 子步骤和工艺段模板 |
+| 字段配置 | `src/store/useFieldConfigStore.ts` | `useFieldConfigStore` - 动态字段定义管理 |
 | **Hooks** | | |
 | 自动布局 | `src/hooks/useAutoLayout.ts` | `useAutoLayout` - Dagre 布局算法 |
 | 实时同步 | `src/hooks/useSocketSync.ts` | `useSocketSync` - WebSocket 同步 |
@@ -44,6 +49,7 @@
 | 调度器 | `src/services/scheduler.ts` | `calculateSchedule`, `calculateScheduleWithContext` - 设备调度算法 |
 | 工厂配置 | `src/services/factoryConfigService.ts` | `factoryConfigService` - 工厂和产线配置管理 |
 | 操作模板 | `src/services/operationTemplates.ts` | 操作模板服务 |
+| 字段配置 | `src/services/fieldConfigService.ts` | `fieldConfigService` - 字段配置 CRUD |
 | **路由** | | |
 | 路由配置 | `src/router.tsx` | React Router 路由配置 |
 | **类型定义** | | |
@@ -51,7 +57,7 @@
 | 设备类型 | `src/types/equipment.ts` | `DeviceType`, `EquipmentSpec` |
 | 物料类型 | `src/types/material.ts` | 物料相关类型定义 |
 | 操作类型 | `src/types/operation.ts` | 操作相关类型定义 |
-| 调度类型 | `src/types/scheduling.ts` | `DeviceResource`, `DeviceRequirement`, `ScheduleResult` |
+| 调度结果 | `src/types/scheduling.ts` | `ScheduleResult` - 包含时间线、设备状态、总耗时、警告等信息 |
 | 工艺类型配置 | `src/types/processTypeConfig.ts` | `SubStepTemplate`, `ProcessSegmentTemplate` |
 | **初始数据** | | |
 | 初始数据 | `src/data/initialData.ts` | `initialNodes`, `initialEdges` |
@@ -137,6 +143,17 @@ server/
 - **设备资源**：`devicePool.ts` - 定义设备资源池，包含设备类型、容量、状态等信息
 - **甘特图视图**：`GanttView` - 可视化显示设备调度时间线，支持缩放和视图切换
 - **调度结果**：`ScheduleResult` - 包含时间线、设备状态、总耗时、警告等信息
+
+### 动态字段配置系统
+
+- **核心思想**：数据库驱动的字段定义，实现配置即代码。
+- **状态管理**：`useFieldConfigStore` - 从后端同步字段定义 (`FieldConfig`)。
+- **渲染引擎**：`DynamicFormRenderer` - 读取配置，动态渲染对应的字段组件。
+- **字段类型**：
+  - 基础类型：Text, Number, Select
+  - 复杂类型：Array (多值), Object (嵌套结构)
+  - 逻辑控制：支持条件显示 (Conditional Rendering) 和验证规则 (Validation)
+- **数据流**：前端编辑配置 -> API -> SQLite (field_definitions 表) -> 前端 Store -> 动态表单组件
 
 ## 4. 数据流架构
 

@@ -14,7 +14,7 @@ export function calculateSchedule(
     const warnings: ScheduleWarning[] = [];
     const deviceStates = new Map<string, DeviceState>();
 
-    // Initialize device states from pool
+    // 从设备池初始化设备状态
     devicePool.forEach(device => {
         deviceStates.set(device.deviceCode, device.currentState || DeviceState.IDLE);
     });
@@ -40,7 +40,7 @@ export function calculateSchedule(
 
     // 第二遍：处理有依赖的步骤
     let changed = true;
-    // Safety break for circular dependencies
+    // 循环依赖的安全中断
     let iterations = 0;
     const maxIterations = allSteps.length * 2;
 
@@ -145,7 +145,7 @@ function scheduleStep(
             message: `步骤 ${step.label} 无法分配设备`,
             relatedStepIds: [step.id],
         });
-        // Record it as processed to allow dependents to proceed, but with warning
+        // 将其记录为已处理以允许依赖项继续，但带有警告
         stepStartTimes.set(step.id, earliestStartTime);
         processedSteps.add(step.id);
         return;
@@ -191,21 +191,21 @@ function allocateDevice(
         if (device && isDeviceAvailable(device.deviceCode, startTime, timeline)) {
             return device;
         }
-        // If specific device requested but not available, we might return null or handle conflict differently
-        // For now, strict: if requested specifically, must be that one.
-        // However, logic above in scheduleStep calls getDeviceAvailableTime if it returns a device. 
-        // Wait, allocateDevice logic in plan was slightly different. 
-        // Plan's logic: "if device && isDeviceAvailable... return device". 
-        // This implies if it's BUSY at startTime it returns null. 
-        // But we actually want to find a device that CAN be used, even if we have to wait.
-        // The previous logic in plan: 
-        // "getDeviceAvailableTime" is called AFTER "allocateDevice". 
-        // This implies "allocateDevice" should just find a suitable device candidate, 
-        // not necessarily one that is free at EXACTLY startTime.
-        // BUT, for dynamic allocation (by type), we might want to pick the one available EARLIEST.
+        // 如果请求了特定设备但不可用，我们可能返回 null 或以不同方式处理冲突
+        // 目前严格：如果明确请求，必须是该设备。
+        // 但是，上面 scheduleStep 中的逻辑在返回设备时会调用 getDeviceAvailableTime。
+        // 等等，计划中的 allocateDevice 逻辑略有不同。
+        // 计划中的逻辑："if device && isDeviceAvailable... return device"。
+        // 这意味着如果它在 startTime 时忙碌，则返回 null。
+        // 但实际上我们想找到一个可以使用的设备，即使我们必须等待。
+        // 计划中的先前逻辑：
+        // "getDeviceAvailableTime" 在 "allocateDevice" 之后调用。
+        // 这意味着 "allocateDevice" 应该只找到一个合适的设备候选，
+        // 不一定是在 EXACTLY startTime 时空闲的设备。
+        // 但是，对于动态分配（按类型），我们可能想选择最早可用的设备。
 
-        // Let's refine:
-        // If specific code: just return that device if it exists. Timeline check happens later to determine start time.
+        // 让我们细化：
+        // 如果指定了代码：如果设备存在，只返回该设备。时间线检查稍后确定开始时间。
         if (device) return device;
         return null;
     }
@@ -214,7 +214,7 @@ function allocateDevice(
     if (requirement.deviceType) {
         const candidates = findDevicesByType(devicePool, requirement.deviceType);
 
-        // Strategy: Find candidate that becomes free earliest after startTime
+        // 策略：找到在 startTime 之后最早空闲的候选设备
         let bestCandidate: DeviceResource | null = null;
         let minAvailableTime = Infinity;
 
@@ -232,7 +232,7 @@ function allocateDevice(
 }
 
 /**
- * 检查设备是否可用 (Simple check for immediate availability, not used inrefined logic above but kept for reference if needed)
+ * 检查设备是否可用（简单的即时可用性检查，在上面的细化逻辑中未使用，但保留以供参考）
  */
 function isDeviceAvailable(
     deviceCode: string,
@@ -242,7 +242,7 @@ function isDeviceAvailable(
     // 检查是否有时间冲突
     for (const occupancy of timeline) {
         if (occupancy.deviceCode === deviceCode) {
-            // 检查时间是否重叠 (Existing logic in plan was simplistic, let's just rely on getDeviceAvailableTime)
+            // 检查时间是否重叠（计划中的现有逻辑过于简单，让我们只依赖 getDeviceAvailableTime）
             if (startTime < occupancy.endTime && startTime + 10 > occupancy.startTime) {
                 return false;
             }
@@ -261,11 +261,11 @@ function getDeviceAvailableTime(
 ): number {
     const occupancies = timeline
         .filter(o => o.deviceCode === deviceCode)
-        .sort((a, b) => a.endTime - b.endTime); // Sort by end time
+        .sort((a, b) => a.endTime - b.endTime); // 按结束时间排序
 
-    // We need to find a gap or the end. 
-    // For simplicity, just append to the end for now. 
-    // Capable scheduler would find gaps.
+    // 我们需要找到一个间隙或末尾。
+    // 为简单起见，现在只追加到末尾。
+    // 有能力的调度器会找到间隙。
 
     if (occupancies.length === 0) {
         return earliestTime;
@@ -302,15 +302,15 @@ function calculateStartTime(
         const startTime = stepStartTimes.get(depId) || 0;
         const occupancy = timeline.find(o => o.stepId === depId);
 
-        // If the dependency had a device, it finishes at its endTime.
-        // If it didn't have a device (processing step?), we estimated its duration or start time.
-        // If occupancy exists, use its endTime.
+        // 如果依赖项有设备，它在 endTime 完成。
+        // 如果它没有设备（处理步骤？），我们估计了它的持续时间或开始时间。
+        // 如果存在占用，使用它的 endTime。
         if (occupancy) {
             maxEndTime = Math.max(maxEndTime, occupancy.endTime);
         } else {
-            // Fallback: we stored start time. We need duration.
-            // We probably need to store end times for ALL steps, not just device ones.
-            // For now, assume default duration if no occupancy
+            // 回退：我们存储了开始时间。我们需要持续时间。
+            // 我们可能需要存储所有步骤的结束时间，而不仅仅是设备步骤。
+            // 现在，如果没有占用，假设默认持续时间
             maxEndTime = Math.max(maxEndTime, startTime + 10);
         }
     }
@@ -326,7 +326,7 @@ function findCriticalPath(
     stepStartTimes: Map<string, number>
 ): string[] {
     // 简化实现：返回耗时最长的路径
-    // Finds the step with the latest end time
+    // 找到结束时间最晚的步骤
     let lastStepId = '';
     let maxEndTime = -1;
 
@@ -344,7 +344,7 @@ function findCriticalPath(
     if (!lastStepId) return [];
 
     const path: string[] = [lastStepId];
-    // Backtrack? For now just return the end node as a marker.
-    // Full critical path needs graph traversal.
+    // 回溯？现在只返回结束节点作为标记。
+    // 完整的关键路径需要图遍历。
     return path;
 }

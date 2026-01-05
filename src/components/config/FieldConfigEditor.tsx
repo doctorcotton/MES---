@@ -39,6 +39,9 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Trash2, Edit, Plus, Search, BarChart3, List, AlertCircle } from 'lucide-react';
 import { getProcessTypeName } from '@/types/processTypeConfig';
+import { NestedFieldEditor } from './NestedFieldEditor';
+import { SelectOptionsEditor } from './SelectOptionsEditor';
+import { v4 as uuidv4 } from 'uuid';
 
 const PROCESS_TYPES: { value: ProcessType; label: string }[] = Object.values(ProcessType).map(type => ({
     value: type,
@@ -52,6 +55,8 @@ const INPUT_TYPES: { value: FieldInputType; label: string }[] = [
     { value: 'conditionValue', label: '条件数值' },
     { value: 'range', label: '范围' },
     { value: 'waterRatio', label: '料水比' },
+    { value: 'array', label: '数组' },
+    { value: 'object', label: '对象' },
 ];
 
 export const FieldConfigEditor: React.FC = () => {
@@ -83,7 +88,7 @@ export const FieldConfigEditor: React.FC = () => {
     const usageStats = useMemo(() => {
         const stats: Record<string, { count: number; locations: string[] }> = {};
 
-        // Initialize for current filtered configs
+        // 为当前过滤的配置初始化
         filteredConfigs.forEach(c => {
             stats[c.key] = { count: 0, locations: [] };
         });
@@ -155,6 +160,39 @@ export const FieldConfigEditor: React.FC = () => {
     const openEditDialog = (config: FieldConfig) => {
         setEditingConfig({ ...config });
         setIsDialogOpen(true);
+    };
+
+    const handleArrayItemTypeChange = (value: string) => {
+        if (!editingConfig) return;
+        if (value === 'object') {
+            setEditingConfig({
+                ...editingConfig,
+                itemFields: editingConfig.itemFields || [], // Init empty fields for object array
+                itemConfig: undefined
+            });
+        } else {
+            // For simple types, we use itemConfig
+            setEditingConfig({
+                ...editingConfig,
+                itemFields: undefined,
+                itemConfig: {
+                    id: uuidv4(),
+                    processType: editingConfig.processType!,
+                    key: 'value',
+                    label: 'Value',
+                    inputType: value as FieldInputType,
+                    sortOrder: 0,
+                    enabled: true,
+                    isSystem: false,
+                }
+            });
+        }
+    };
+
+    const getArrayItemType = () => {
+        if (editingConfig?.itemFields) return 'object';
+        if (editingConfig?.itemConfig) return editingConfig.itemConfig.inputType;
+        return 'text'; // Default
     };
 
     return (
@@ -311,7 +349,7 @@ export const FieldConfigEditor: React.FC = () => {
             </Tabs>
 
             <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-                <DialogContent className="max-w-lg">
+                <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle>{editingConfig?.id ? '编辑字段配置' : '新建字段配置'}</DialogTitle>
                         <DialogDescription>
@@ -319,7 +357,7 @@ export const FieldConfigEditor: React.FC = () => {
                         </DialogDescription>
                     </DialogHeader>
                     {editingConfig && (
-                        <div className="space-y-4 py-4">
+                        <div className="space-y-6 py-4">
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="space-y-2">
                                     <Label>字段Key (英文)</Label>
@@ -348,7 +386,18 @@ export const FieldConfigEditor: React.FC = () => {
                                     <Label>输入类型</Label>
                                     <Select
                                         value={editingConfig.inputType}
-                                        onValueChange={(v) => setEditingConfig({ ...editingConfig, inputType: v as FieldInputType })}
+                                        onValueChange={(v) => {
+                                            const newVal = v as FieldInputType;
+                                            // 类型更改时重置类型特定的配置
+                                            setEditingConfig({
+                                                ...editingConfig,
+                                                inputType: newVal,
+                                                options: undefined,
+                                                itemConfig: undefined,
+                                                itemFields: undefined,
+                                                fields: undefined
+                                            });
+                                        }}
                                     >
                                         <SelectTrigger>
                                             <SelectValue />
@@ -361,7 +410,7 @@ export const FieldConfigEditor: React.FC = () => {
                                     </Select>
                                 </div>
                                 <div className="space-y-2">
-                                    <Label>单位</Label>
+                                    <Label>单位 (选填)</Label>
                                     <Input
                                         value={editingConfig.unit || ''}
                                         onChange={e => setEditingConfig({ ...editingConfig, unit: e.target.value })}
@@ -371,21 +420,54 @@ export const FieldConfigEditor: React.FC = () => {
                             </div>
 
                             {editingConfig.inputType === 'select' && (
-                                <div className="space-y-2">
-                                    <Label>选项配置 (JSON)</Label>
-                                    <div className="relative">
-                                        <Input
-                                            className="font-mono text-xs"
-                                            value={JSON.stringify(editingConfig.options || [])}
-                                            onChange={e => {
-                                                try {
-                                                    const opts = JSON.parse(e.target.value);
-                                                    setEditingConfig({ ...editingConfig, options: opts });
-                                                } catch (err) { }
-                                            }}
-                                        />
-                                        <p className="text-[10px] text-muted-foreground mt-1">格式: {'[{"value":"v", "label":"l"}]'}</p>
+                                <div className="space-y-2 border p-3 rounded bg-slate-50">
+                                    <SelectOptionsEditor
+                                        options={editingConfig.options || []}
+                                        onChange={opts => setEditingConfig({ ...editingConfig, options: opts })}
+                                    />
+                                </div>
+                            )}
+
+                            {editingConfig.inputType === 'array' && (
+                                <div className="space-y-4 border p-3 rounded bg-slate-50">
+                                    <div className="space-y-2">
+                                        <Label>数组项类型</Label>
+                                        <Select
+                                            value={getArrayItemType()}
+                                            onValueChange={handleArrayItemTypeChange}
+                                        >
+                                            <SelectTrigger>
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="text">文本 (Text)</SelectItem>
+                                                <SelectItem value="number">数字 (Number)</SelectItem>
+                                                <SelectItem value="object">复杂对象 (Object)</SelectItem>
+                                            </SelectContent>
+                                        </Select>
                                     </div>
+
+                                    {getArrayItemType() === 'object' && (
+                                        <div className="mt-2">
+                                            <Label className="mb-2 block">数组对象字段配置</Label>
+                                            <NestedFieldEditor
+                                                fields={editingConfig.itemFields || []}
+                                                onChange={fields => setEditingConfig({ ...editingConfig, itemFields: fields })}
+                                                processType={editingConfig.processType as string}
+                                            />
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {editingConfig.inputType === 'object' && (
+                                <div className="space-y-4 border p-3 rounded bg-slate-50">
+                                    <Label className="mb-2 block">对象字段配置</Label>
+                                    <NestedFieldEditor
+                                        fields={editingConfig.fields || []}
+                                        onChange={fields => setEditingConfig({ ...editingConfig, fields: fields })}
+                                        processType={editingConfig.processType as string}
+                                    />
                                 </div>
                             )}
 

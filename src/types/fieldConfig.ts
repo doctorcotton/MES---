@@ -7,7 +7,9 @@ export type FieldInputType =
     | 'select'
     | 'range'
     | 'conditionValue'
-    | 'waterRatio';
+    | 'waterRatio'
+    | 'array'
+    | 'object';
 
 export interface FieldConfig {
     id: string;
@@ -18,6 +20,16 @@ export interface FieldConfig {
     unit?: string;
     options?: { value: string; label: string }[];
     defaultValue?: any;
+
+    // Array type config
+    itemConfig?: FieldConfig;     // For simple arrays or single-field objects in array
+    itemFields?: FieldConfig[];   // For object arrays with multiple fields
+    minItems?: number;
+    maxItems?: number;
+
+    // Object type config
+    fields?: FieldConfig[];       // For nested object fields
+
     validation?: {
         min?: number;
         max?: number;

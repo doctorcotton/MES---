@@ -10,11 +10,11 @@ export interface ExtractedField {
 }
 
 /**
- * Infer field input type from value
+ * 从值推断字段输入类型
  */
 function inferFieldType(key: string, value: any): FieldInputType {
     if (key === 'waterVolumeMode' || key === 'stirringRate' || key === 'transferType' || key === 'method') {
-        return 'select'; // These are typically enums/selects
+        return 'select'; // 这些通常是枚举/选择类型
     }
 
     if (typeof value === 'object' && value !== null) {
@@ -25,18 +25,18 @@ function inferFieldType(key: string, value: any): FieldInputType {
             if ('condition' in value) {
                 return 'conditionValue';
             }
-            // It has value and unit, treat as number if value is number
+            // 它有值和单位，如果值是数字则视为数字类型
             return 'number';
         }
     }
 
     if (typeof value === 'number') return 'number';
 
-    return 'text'; // Default fallback
+    return 'text'; // 默认回退
 }
 
 /**
- * Extract fields from process data
+ * 从流程数据中提取字段
  */
 export function extractFieldsFromRecipes(processes: Process[]): ExtractedField[] {
     const fieldMap = new Map<string, ExtractedField>();
@@ -45,20 +45,20 @@ export function extractFieldsFromRecipes(processes: Process[]): ExtractedField[]
         process.node.subSteps.forEach(subStep => {
             const { processType, params } = subStep;
 
-            // Identify the params object key based on processType logic
-            // Usually it's like dissolutionParams, compoundingParams etc.
-            // Or we look for the object inside params that is not 'processType'
+            // 根据 processType 逻辑识别参数对象键
+            // 通常是 dissolutionParams、compoundingParams 等
+            // 或者我们在 params 中查找不是 'processType' 的对象
             if (!params) return;
 
-            // Common pattern in initialData: params = { processType: '...', dissolutionParams: { ... } }
-            // unique keys excluding 'processType'
+            // initialData 中的常见模式：params = { processType: '...', dissolutionParams: { ... } }
+            // 排除 'processType' 的唯一键
             const paramKeys = Object.keys(params).filter(k => k !== 'processType');
 
             paramKeys.forEach(parentKey => {
                 const paramObj = (params as any)[parentKey];
-                if (typeof paramObj !== 'object' || paramObj === null) return; // Should be the nested params object
+                if (typeof paramObj !== 'object' || paramObj === null) return; // 应该是嵌套的参数对象
 
-                // specific fields
+                // 特定字段
                 Object.keys(paramObj).forEach(fieldKey => {
                     const value = paramObj[fieldKey];
                     const uniqueId = `${processType}:${fieldKey}`;

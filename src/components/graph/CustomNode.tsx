@@ -15,17 +15,6 @@ const formatConditionValue = (value: { value: number; unit: string; condition?: 
   return `${condition}${value.value}${value.unit}`;
 };
 
-// 格式化温度范围
-const formatTemperature = (temp: { min?: number; max?: number; unit: string }) => {
-  if (temp.min !== undefined && temp.max !== undefined) {
-    return `${temp.min}-${temp.max}${temp.unit}`;
-  } else if (temp.min !== undefined) {
-    return `≥${temp.min}${temp.unit}`;
-  } else if (temp.max !== undefined) {
-    return `≤${temp.max}${temp.unit}`;
-  }
-  return '常温';
-};
 
 /**
  * 根据输入数量计算分档宽度
@@ -41,7 +30,7 @@ const SubStepParamsDisplay = ({ subStep, inputSources }: { subStep: SubStep, inp
   const { getConfigsByProcessType } = useFieldConfigStore();
   const configs = getConfigsByProcessType(subStep.processType);
 
-  // Helper to get value from nested params structure
+  // 从嵌套参数结构中获取值的辅助函数
   const getParamValue = (key: string): any => {
     const paramKeyMaps: Record<string, string> = {
       [ProcessType.DISSOLUTION]: 'dissolutionParams',
@@ -52,7 +41,7 @@ const SubStepParamsDisplay = ({ subStep, inputSources }: { subStep: SubStep, inp
     };
 
     if (subStep.processType === ProcessType.OTHER) {
-      // OTHER uses 'params' directly as string, but handle if it becomes structured
+      // OTHER 类型直接使用 'params' 作为字符串，但如果它变成结构化则处理
       if (key === 'params') return (subStep.params as any).params;
       return null;
     }
@@ -62,7 +51,7 @@ const SubStepParamsDisplay = ({ subStep, inputSources }: { subStep: SubStep, inp
     return (subStep.params as any)[groupKey][key];
   };
 
-  // Special handling for Compounding input sources (presuming this is custom logic not in fields)
+  // 对 Compounding 输入源的特殊处理（假设这是不在字段中的自定义逻辑）
   const renderCompoundingExtras = () => {
     if (subStep.processType === ProcessType.COMPOUNDING && inputSources && inputSources.length > 0) {
       return (
@@ -97,7 +86,7 @@ const SubStepParamsDisplay = ({ subStep, inputSources }: { subStep: SubStep, inp
     } else if (config.inputType === 'conditionValue') {
       displayValue = formatConditionValue(value);
     } else if (config.inputType === 'range' || config.inputType === 'waterRatio') {
-      // Re-use formatTemperature logic but generic
+      // 重用 formatTemperature 逻辑但更通用
       if (value.min !== undefined && value.max !== undefined) {
         displayValue = `${value.min}-${value.max}`;
       } else if (value.min !== undefined) {
@@ -106,8 +95,48 @@ const SubStepParamsDisplay = ({ subStep, inputSources }: { subStep: SubStep, inp
         displayValue = `≤${value.max}`;
       }
       if (config.unit) displayValue += config.unit;
+    } else if (config.inputType === 'object' && config.fields) {
+      // 处理对象类型: 使用 fields 元数据来格式化
+      const parts: string[] = [];
+
+      config.fields.forEach(fieldConfig => {
+        const fieldValue = value[fieldConfig.key];
+        if (fieldValue !== undefined && fieldValue !== null) {
+          // 根据字段语义添加前缀
+          if (fieldConfig.key === 'max') {
+            parts.push(`≤${fieldValue}`);
+          } else if (fieldConfig.key === 'min') {
+            parts.push(`≥${fieldValue}`);
+          } else if (fieldConfig.key === 'value') {
+            parts.push(String(fieldValue));
+          } else if (fieldConfig.key !== 'unit') {
+            // 跳过 unit 字段,它会被附加到末尾
+            parts.push(String(fieldValue));
+          }
+        }
+      });
+
+      // 查找 unit 字段
+      const unitField = config.fields.find(f => f.key === 'unit');
+      const unit = unitField ? value[unitField.key] : '';
+
+      displayValue = parts.join('') + unit;
+    } else if (config.inputType === 'array' && Array.isArray(value)) {
+      // 处理数组类型
+      if (value.length === 0) {
+        displayValue = '无';
+      } else if (config.itemFields) {
+        // 对象数组: 显示每个对象的主要字段
+        displayValue = value.map(item => {
+          // 优先显示 name 字段
+          return item.name || item.label || JSON.stringify(item);
+        }).join(', ');
+      } else {
+        // 简单数组
+        displayValue = value.join(', ');
+      }
     } else {
-      // Text, number
+      // 文本、数字
       displayValue = String(value);
       if (config.unit) displayValue += config.unit;
     }

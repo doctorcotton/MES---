@@ -3,7 +3,7 @@ import { RecipeData } from './types';
 import { initialProcesses, initialEdges } from '../../src/data/initialData';
 import { syncDefaultFields } from './migrations/syncDefaultFields';
 
-const db = new Database('recipe.db');
+const db = new Database('database.sqlite');
 
 // 初始化数据库
 export function initDatabase() {
@@ -23,7 +23,7 @@ export function initDatabase() {
     )
   `);
 
-  // Create field config table
+  // 创建字段配置表
   db.exec(`
     CREATE TABLE IF NOT EXISTS process_field_configs (
       id TEXT PRIMARY KEY,
@@ -32,22 +32,34 @@ export function initDatabase() {
       label TEXT NOT NULL,
       input_type TEXT NOT NULL,
       unit TEXT,
-      options TEXT, -- JSON string
-      default_value TEXT, -- JSON string
-      validation TEXT, -- JSON string
-      display_condition TEXT, -- JSON string
+      options TEXT, -- JSON 字符串
+      default_value TEXT, -- JSON 字符串
+      validation TEXT, -- JSON 字符串
+      display_condition TEXT, -- JSON 字符串
       sort_order INTEGER DEFAULT 0,
       is_system INTEGER DEFAULT 0,
       enabled INTEGER DEFAULT 1,
       created_at TEXT,
       updated_at TEXT,
+      item_config TEXT, -- 数组项的 JSON 字符串
+      item_fields TEXT, -- 数组对象项的 JSON 字符串
+      fields TEXT, -- 对象字段的 JSON 字符串
+      min_items INTEGER,
+      max_items INTEGER,
       UNIQUE(process_type, key)
     );
     CREATE INDEX IF NOT EXISTS idx_process_type ON process_field_configs(process_type);
     CREATE INDEX IF NOT EXISTS idx_enabled ON process_field_configs(enabled);
   `);
 
-  // Sync default fields
+  // 迁移现有表
+  try { db.exec('ALTER TABLE process_field_configs ADD COLUMN item_config TEXT'); } catch (e) { }
+  try { db.exec('ALTER TABLE process_field_configs ADD COLUMN item_fields TEXT'); } catch (e) { }
+  try { db.exec('ALTER TABLE process_field_configs ADD COLUMN fields TEXT'); } catch (e) { }
+  try { db.exec('ALTER TABLE process_field_configs ADD COLUMN min_items INTEGER'); } catch (e) { }
+  try { db.exec('ALTER TABLE process_field_configs ADD COLUMN max_items INTEGER'); } catch (e) { }
+
+  // 同步默认字段
   try {
     syncDefaultFields();
   } catch (error) {
@@ -131,7 +143,7 @@ export function updateRecipe(recipeId: string, data: Omit<RecipeData, 'id'>, use
 
 export { db };
 
-// Field Config Operations
+// 字段配置操作
 export interface FieldConfig {
   id: string;
   processType: string;
@@ -148,6 +160,11 @@ export interface FieldConfig {
   enabled: boolean;
   createdAt?: string;
   updatedAt?: string;
+  itemConfig?: any;
+  itemFields?: any;
+  fields?: any;
+  minItems?: number;
+  maxItems?: number;
 }
 
 function mapRowToFieldConfig(row: any): FieldConfig {
@@ -166,7 +183,12 @@ function mapRowToFieldConfig(row: any): FieldConfig {
     isSystem: !!row.is_system,
     enabled: !!row.enabled,
     createdAt: row.created_at,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
+    itemConfig: row.item_config ? JSON.parse(row.item_config) : undefined,
+    itemFields: row.item_fields ? JSON.parse(row.item_fields) : undefined,
+    fields: row.fields ? JSON.parse(row.fields) : undefined,
+    minItems: row.min_items,
+    maxItems: row.max_items
   };
 }
 
@@ -195,11 +217,13 @@ export function createFieldConfig(config: FieldConfig): boolean {
         INSERT INTO process_field_configs (
             id, process_type, key, label, input_type, unit, options, 
             default_value, validation, display_condition, sort_order, 
-            is_system, enabled, created_at, updated_at
+            is_system, enabled, created_at, updated_at,
+            item_config, item_fields, fields, min_items, max_items
         ) VALUES (
             @id, @processType, @key, @label, @inputType, @unit, @options, 
             @defaultValue, @validation, @displayCondition, @sortOrder, 
-            @isSystem, @enabled, @createdAt, @updatedAt
+            @isSystem, @enabled, @createdAt, @updatedAt,
+            @itemConfig, @itemFields, @fields, @minItems, @maxItems
         )
     `).run({
     id: config.id,
@@ -216,7 +240,12 @@ export function createFieldConfig(config: FieldConfig): boolean {
     isSystem: config.isSystem ? 1 : 0,
     enabled: config.enabled ? 1 : 0,
     createdAt: config.createdAt || new Date().toISOString(),
-    updatedAt: config.updatedAt || new Date().toISOString()
+    updatedAt: config.updatedAt || new Date().toISOString(),
+    itemConfig: config.itemConfig ? JSON.stringify(config.itemConfig) : null,
+    itemFields: config.itemFields ? JSON.stringify(config.itemFields) : null,
+    fields: config.fields ? JSON.stringify(config.fields) : null,
+    minItems: config.minItems || null,
+    maxItems: config.maxItems || null
   });
   return result.changes > 0;
 }
@@ -227,29 +256,44 @@ export function updateFieldConfig(id: string, config: Partial<FieldConfig>): boo
   const validKeys = [
     'processType', 'key', 'label', 'inputType', 'unit', 'options',
     'defaultValue', 'validation', 'displayCondition', 'sortOrder',
-    'enabled', 'updatedAt'
-  ]; // isSystem cannot be updated normally, created_at shouldn't change
+    'enabled', 'updatedAt',
+    'itemConfig', 'itemFields', 'fields', 'minItems', 'maxItems'
+  ]; // isSystem 通常不能更新，created_at 不应更改
 
-  // Map camelCase to snake_case for DB
+  // 将 camelCase 映射到 snake_case 用于数据库
   const dbKeyMap: Record<string, string> = {
     processType: 'process_type',
     inputType: 'input_type',
     defaultValue: 'default_value',
     displayCondition: 'display_condition',
     sortOrder: 'sort_order',
-    updatedAt: 'updated_at'
+    updatedAt: 'updated_at',
+    itemConfig: 'item_config',
+    itemFields: 'item_fields',
+    fields: 'fields',
+    minItems: 'min_items',
+    maxItems: 'max_items'
   };
 
   Object.keys(config).forEach(key => {
     if (validKeys.includes(key)) {
+      let value = (config as any)[key];
+
+      // 跳过 undefined 值，避免 SQLite 参数绑定错误
+      if (value === undefined) return;
+
       const dbKey = dbKeyMap[key] || key;
       sets.push(`${dbKey} = @${key}`);
 
-      // Handle JSON serialization
-      let value = (config as any)[key];
-      if (['options', 'defaultValue', 'validation', 'displayCondition'].includes(key)) {
-        value = value !== undefined ? JSON.stringify(value) : null;
+      // 处理 boolean 字段：转换为 0/1
+      if (key === 'enabled') {
+        value = value ? 1 : 0;
       }
+      // 处理 JSON 序列化：正确处理 null 和 undefined
+      else if (['options', 'defaultValue', 'validation', 'displayCondition', 'itemConfig', 'itemFields', 'fields'].includes(key)) {
+        value = (value !== null && value !== undefined) ? JSON.stringify(value) : null;
+      }
+
       params[key] = value;
     }
   });
@@ -261,7 +305,7 @@ export function updateFieldConfig(id: string, config: Partial<FieldConfig>): boo
 }
 
 export function deleteFieldConfig(id: string): boolean {
-  // Check if system field
+  // 检查是否为系统字段
   const current = getFieldConfig(id);
   if (current?.isSystem) return false;
 

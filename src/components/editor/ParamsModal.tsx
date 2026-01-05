@@ -50,74 +50,72 @@ export function ParamsModal({ nodeId, open, onOpenChange }: ParamsModalProps) {
   );
   const subStep = process?.node.subSteps.find(s => s.id === subStepId);
 
-  const { configs, fetchConfigs, getConfigsByProcessType } = useFieldConfigStore();
+  const { configs, fetchConfigs, getConfigsByProcessType, isLoading, error } = useFieldConfigStore();
   const [formData, setFormData] = useState<any>({});
   const [currentConfigs, setCurrentConfigs] = useState<any[]>([]);
+  const [configLoadError, setConfigLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchConfigs();
-  }, []);
+  }, [fetchConfigs]);
 
   useEffect(() => {
     if (!subStep || !process) return;
 
-    // Filter configs for this type, with fallback
+    // 过滤此类型的配置，带回退
     const relevantConfigs = getConfigsByProcessType(subStep.processType);
     if (relevantConfigs.length > 0) {
       setCurrentConfigs(relevantConfigs);
-      if (relevantConfigs.length > 0) {
-        setCurrentConfigs(relevantConfigs);
-      } else {
-        // If no configs found for this type, set empty.
-        // Ideally, the DB sync should have ensured configs exist.
-        // We log a warning if needed for debugging.
-        console.warn(`No field configs found for process type: ${subStep.processType}`);
-        setCurrentConfigs([]);
-      }
+      setConfigLoadError(null);
+    } else {
+      // 如果未找到此类型的配置，设置为空并显示错误
+      console.warn(`未找到工艺类型 "${subStep.processType}" 的字段配置`);
+      setCurrentConfigs([]);
+      setConfigLoadError(`未找到工艺类型 "${subStep.processType}" 的字段配置，请检查数据库是否正确同步`);
+    }
 
-      // Initial data loading
-      const equipmentV2 = getEquipmentConfig(subStep);
-      const materialsV2 = getMaterials(subStep);
-      const operationsV2 = subStep.operationsV2;
+    // 初始数据加载
+    const equipmentV2 = getEquipmentConfig(subStep);
+    const materialsV2 = getMaterials(subStep);
+    const operationsV2 = subStep.operationsV2;
 
-      const commonV2 = {
-        equipmentV2,
-        materialsV2,
-        operationsV2,
-      };
+    const commonV2 = {
+      equipmentV2,
+      materialsV2,
+      operationsV2,
+    };
 
-      // Scheduling data
-      const schedulingData = {
-        deviceRequirement: subStep.deviceRequirement,
-        estimatedDuration: subStep.estimatedDuration,
-        canParallelWith: subStep.canParallelWith,
-        mustAfter: subStep.mustAfter
-      };
+    // 调度数据
+    const schedulingData = {
+      deviceRequirement: subStep.deviceRequirement,
+      estimatedDuration: subStep.estimatedDuration,
+      canParallelWith: subStep.canParallelWith,
+      mustAfter: subStep.mustAfter
+    };
 
-      // Load params
-      const paramKey = PARAM_KEYS[subStep.processType];
-      const params: any = (subStep.params as any)[paramKey] || {};
+    // 加载参数
+    const paramKey = PARAM_KEYS[subStep.processType];
+    const params: any = (subStep.params as any)[paramKey] || {};
 
-      // Flatten params for form: { key: value }
-      // Since DynamicFormRenderer expects keys to match config keys
-      // And store param object structure matches config keys (mostly)
-      // We can just spread params. 
-      // EXCEPT "params" for OTHER type is a string, handle that.
+    // 将参数展平为表单格式：{ key: value }
+    // 由于 DynamicFormRenderer 期望键与配置键匹配
+    // 并且存储的参数对象结构与配置键匹配（大部分情况下）
+    // 我们可以直接展开参数。
+    // 但 OTHER 类型的 "params" 是字符串，需要特殊处理。
 
-      let formParams = {};
-      if (subStep.processType === ProcessType.OTHER) {
-        formParams = { params: (subStep.params as any).params };
-      } else {
-        formParams = { ...params };
-      }
+    let formParams = {};
+    if (subStep.processType === ProcessType.OTHER) {
+      formParams = { params: (subStep.params as any).params };
+    } else {
+      formParams = { ...params };
+    }
 
-      setFormData({
-        ...commonV2,
-        ...schedulingData,
-        ...formParams
-      });
-
-    }, [subStep, process, open, configs]); // Added configs dependency
+    setFormData({
+      ...commonV2,
+      ...schedulingData,
+      ...formParams
+    });
+  }, [subStep, process, open, configs]); // Added configs dependency
 
   const handleSave = () => {
     if (!subStep || !process) return;
@@ -135,7 +133,7 @@ export function ParamsModal({ nodeId, open, onOpenChange }: ParamsModalProps) {
 
     let updateData: any = {};
 
-    // Handle specific structure for ProcessNodeData
+    // 处理 ProcessNodeData 的特定结构
     if (subStep.processType === ProcessType.OTHER) {
       updateData.params = {
         processType: subStep.processType,
@@ -148,7 +146,7 @@ export function ParamsModal({ nodeId, open, onOpenChange }: ParamsModalProps) {
       };
     }
 
-    // Scheduling and Layout updates
+    // 调度和布局更新
     if (formData.deviceRequirement) updateData.deviceRequirement = formData.deviceRequirement;
     if (formData.estimatedDuration) updateData.estimatedDuration = formData.estimatedDuration;
     if (formData.canParallelWith) updateData.canParallelWith = formData.canParallelWith;
@@ -181,13 +179,45 @@ export function ParamsModal({ nodeId, open, onOpenChange }: ParamsModalProps) {
 
             <TabsContent value="params" className="flex-1 overflow-auto p-1">
               <div className="space-y-4">
+                {/* 加载状态 */}
+                {isLoading && (
+                  <div className="flex items-center justify-center p-8 text-gray-500">
+                    <div className="text-center">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
+                      <p>加载字段配置中...</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* 错误提示 */}
+                {(error || configLoadError) && !isLoading && (
+                  <div className="bg-red-50 border border-red-200 rounded-md p-4 text-red-800">
+                    <div className="flex items-start">
+                      <svg className="w-5 h-5 mr-2 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                      </svg>
+                      <div className="flex-1">
+                        <h4 className="font-medium mb-1">字段配置加载失败</h4>
+                        <p className="text-sm">{error || configLoadError}</p>
+                        <p className="text-sm mt-2">建议：</p>
+                        <ul className="text-sm list-disc list-inside mt-1">
+                          <li>检查后端服务是否正常运行</li>
+                          <li>刷新页面重新加载配置</li>
+                          <li>如问题持续，请联系管理员检查数据库</li>
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Dynamic Form Renderer */}
-                <DynamicFormRenderer
-                  configs={currentConfigs}
-                  data={formData}
-                  onChange={(updated) => setFormData((prev: any) => ({ ...prev, ...updated }))}
-                />
+                {!isLoading && !error && !configLoadError && (
+                  <DynamicFormRenderer
+                    configs={currentConfigs}
+                    data={formData}
+                    onChange={(updated) => setFormData((prev: any) => ({ ...prev, ...updated }))}
+                  />
+                )}
 
                 <div className="border-t pt-4 mt-4">
                   <h4 className="text-sm font-medium mb-4">V2 数据 (核心结构)</h4>

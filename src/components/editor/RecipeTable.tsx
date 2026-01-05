@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { cn } from '@/lib/utils';
 import {
   Table,
   TableBody,
@@ -42,7 +43,6 @@ import { AddSubStepDialog } from './AddSubStepDialog';
 import { Plus, Trash2, Lock, ChevronDown, ChevronRight, Edit2, Copy, ArrowUp, ArrowDown } from 'lucide-react';
 import { SubStep, ProcessType, getEquipmentConfig, getMaterials, Process } from '@/types/recipe';
 import { DeviceType } from '@/types/equipment';
-import { DeviceRequirement } from '@/types/scheduling';
 import { DeviceRequirement } from '@/types/scheduling';
 import { useProcessTypeConfigStore } from '@/store/useProcessTypeConfigStore';
 import { useFieldConfigStore } from '@/store/useFieldConfigStore';
@@ -217,10 +217,14 @@ function SortableProcessRow({
                     />
                   ) : (
                     <span
-                      className={canEdit ? 'cursor-pointer hover:text-blue-600' : ''}
+                      className={cn(
+                        canEdit ? 'cursor-pointer hover:text-blue-600' : '',
+                        'min-w-[120px] inline-block',
+                        !process.name && canEdit && 'border border-dashed border-gray-300 px-2 py-1 rounded text-gray-400'
+                      )}
                       onClick={() => canEdit && handleStartEditProcess(process.id)}
                     >
-                      {process.name}
+                      {process.name || '未命名步骤'}
                     </span>
                   )}
                 </span>
@@ -367,14 +371,14 @@ export function RecipeTable() {
   useEffect(() => {
     setExpandedProcesses(prev => {
       const currentIds = new Set(processes.map(p => p.id));
-      // 保留已展开的，添加新processes的ID
+      // 保留已展开的，添加新 processes 的 ID
       const next = new Set(prev);
       processes.forEach(p => {
         if (!next.has(p.id)) {
-          next.add(p.id); // 新processes默认展开
+          next.add(p.id); // 新 processes 默认展开
         }
       });
-      // 移除已删除的processes
+      // 移除已删除的 processes
       prev.forEach(id => {
         if (!currentIds.has(id)) {
           next.delete(id);
@@ -552,8 +556,8 @@ export function RecipeTable() {
     const { getConfigsByProcessType } = useFieldConfigStore();
     const configs = getConfigsByProcessType(subStep.processType);
 
-    // Helper to get value from nested params structure - DUPLICATED LOGIC
-    // Ideally should be a helper util
+    // 从嵌套参数结构中获取值的辅助函数 - 重复逻辑
+    // 理想情况下应该是辅助工具函数
     const getParamValue = (key: string): any => {
       const paramKeyMaps: Record<string, string> = {
         [ProcessType.DISSOLUTION]: 'dissolutionParams',
@@ -586,12 +590,52 @@ export function RecipeTable() {
       } else if (config.inputType === 'range' || config.inputType === 'waterRatio') {
         if (value.min !== undefined && value.max !== undefined) {
           displayValue = `${value.min}-${value.max}`;
-        } else if (value.min !== undefined) {
-          displayValue = `≥${value.min}`;
         } else if (value.max !== undefined) {
           displayValue = `≤${value.max}`;
+        } else if (value.min !== undefined) {
+          displayValue = `≥${value.min}`;
         }
         if (config.unit) displayValue += config.unit;
+      } else if (config.inputType === 'object' && config.fields) {
+        // 处理对象类型: 使用 fields 元数据来格式化
+        const parts: string[] = [];
+
+        config.fields.forEach(fieldConfig => {
+          const fieldValue = value[fieldConfig.key];
+          if (fieldValue !== undefined && fieldValue !== null) {
+            // 根据字段语义添加前缀
+            if (fieldConfig.key === 'max') {
+              parts.push(`≤${fieldValue}`);
+            } else if (fieldConfig.key === 'min') {
+              parts.push(`≥${fieldValue}`);
+            } else if (fieldConfig.key === 'value') {
+              parts.push(String(fieldValue));
+            } else if (fieldConfig.key !== 'unit') {
+              // 跳过 unit 字段,它会被附加到末尾
+              parts.push(String(fieldValue));
+            }
+          }
+        });
+
+        // 查找 unit 字段
+        const unitField = config.fields.find(f => f.key === 'unit');
+        const unit = unitField ? value[unitField.key] : '';
+
+        displayValue = parts.join('') + unit;
+      } else if (config.inputType === 'array' && Array.isArray(value)) {
+        // 处理数组类型
+        if (value.length === 0) {
+          displayValue = '无';
+        } else if (config.itemFields) {
+          // 对象数组: 显示每个对象的主要字段
+          displayValue = value.map(item => {
+            // 优先显示 name 字段
+            return item.name || item.label || JSON.stringify(item);
+          }).join(', ');
+        } else {
+          // 简单数组
+          displayValue = value.join(', ');
+        }
       } else if (config.inputType === 'number' || config.inputType === 'text') {
         displayValue = String(value);
         if (config.unit) displayValue += config.unit;

@@ -21,13 +21,17 @@ class SocketService {
       this.socket = null;
     }
 
-    // 创建新连接
+    // 创建新连接,通过 auth 参数传递 userId 和 userName
     this.socket = io(SOCKET_URL, {
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: this.maxReconnectAttempts,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
+      auth: {
+        userId: _userId,
+        userName: _userName,
+      },
     });
 
     this.socket.on('connect', () => {

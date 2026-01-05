@@ -10,9 +10,11 @@ import { useCollabStore } from './store/useCollabStore';
 import { useSocketSync } from './hooks/useSocketSync';
 import { useAutoSave } from './hooks/useAutoSave';
 import { useHeartbeat } from './hooks/useHeartbeat';
+import { useFieldConfigStore } from './store/useFieldConfigStore';
 
 function App() {
   const { setUser } = useCollabStore();
+  const { fetchConfigs } = useFieldConfigStore();
   const socketConnectedRef = useRef(false);
 
   // 初始化用户和Socket连接
@@ -43,12 +45,17 @@ function App() {
     socketService.connect(userId, userName);
     socketConnectedRef.current = true;
 
+    // 预加载字段配置
+    fetchConfigs().catch(error => {
+      console.error('Failed to load field configs:', error);
+    });
+
     // 组件卸载时断开连接
     return () => {
       socketConnectedRef.current = false;
       socketService.disconnect();
     };
-  }, [setUser]);
+  }, [setUser, fetchConfigs]);
 
   // Socket同步
   useSocketSync();

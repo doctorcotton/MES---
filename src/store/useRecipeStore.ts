@@ -476,6 +476,20 @@ export const useRecipeStore = create<RecipeStore>((set, get) => ({
   saveToServer: async (userId?: string) => {
     const state = get();
     state.setSaving(true);
+
+    console.log('[保存] 开始保存到服务器...', {
+      userId,
+      version: state.version,
+      hasUserId: !!userId
+    });
+
+    // 检查 userId 是否存在
+    if (!userId) {
+      console.error('[保存] 错误:缺少 userId');
+      state.setSaving(false);
+      return false;
+    }
+
     try {
       const recipeData = {
         metadata: state.metadata,
@@ -494,25 +508,40 @@ export const useRecipeStore = create<RecipeStore>((set, get) => ({
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId: userId || null,
+          userId,
           recipeData,
         }),
       });
 
       if (!response.ok) {
         const error = await response.json();
-        console.error('保存失败:', error);
+        console.error('[保存] 保存失败:', {
+          status: response.status,
+          error,
+          userId,
+        });
         return false;
       }
 
       const data = await response.json();
-      if (data.version) {
-        set({ version: data.version });
-      }
+      console.log('[保存] 保存成功', {
+        version: data.version || data.recipe?.version,
+        userId
+      });
+
+      // 更新版本和更新时间
+      const newVersion = data.version || data.recipe?.version || state.version;
+      set({
+        version: newVersion,
+        metadata: {
+          ...state.metadata,
+          updatedAt: new Date().toISOString(), // 关键修复:更新保存时间
+        }
+      });
 
       return true;
     } catch (error) {
-      console.error('保存错误:', error);
+      console.error('[保存] 保存错误:', error);
       return false;
     } finally {
       state.setSaving(false);

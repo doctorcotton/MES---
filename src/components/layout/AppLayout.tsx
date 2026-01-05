@@ -46,17 +46,31 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       alert('需要编辑权限');
       return;
     }
+
+    if (!userId) {
+      console.error('[保存] 错误:userId 为空');
+      alert('用户ID未设置,请刷新页面重试');
+      return;
+    }
+
+    console.log('[保存] 用户点击保存按钮', {
+      userId,
+      isLockedByMe: isLockedByMe()
+    });
+
     setSaving(true);
     try {
-      const success = await saveToServer(userId || undefined);
+      const success = await saveToServer(userId);
       if (success) {
-        // 保存成功，可以显示提示
+        console.log('[保存] 保存成功,已更新到服务器');
+        // 可以添加更友好的提示,但保持简洁
       } else {
-        alert('保存失败，请重试');
+        console.error('[保存] 保存失败');
+        alert('保存失败,请重试。如果持续失败,请检查是否持有编辑权限。');
       }
     } catch (error) {
-      console.error('保存错误:', error);
-      alert('保存失败，请重试');
+      console.error('[保存] 保存异常:', error);
+      alert('保存失败,请重试');
     } finally {
       setSaving(false);
     }
