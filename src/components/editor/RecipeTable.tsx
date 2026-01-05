@@ -649,13 +649,14 @@ export function RecipeTable() {
 
     return (
       <div className="flex flex-col gap-1 text-xs text-left">
-        {configs.slice(0, 3).map(config => { // Limit to 3 fields for table view?
+        {configs.slice(0, 3).map(config => { // Limit to 3 fields for table view
           const val = getParamValue(config.key);
           if (val === undefined || val === null) return null;
+          const displayValue = renderFieldValue(config, val);
           return (
-            <span key={config.key} className="truncate">
+            <span key={config.key} className="truncate block" title={`${config.label}: ${displayValue}`}>
               <span className="text-slate-500 mr-1">{config.label}:</span>
-              {renderFieldValue(config, val)}
+              {displayValue}
             </span>
           );
         })}
@@ -665,25 +666,25 @@ export function RecipeTable() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto relative">
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}
           onDragEnd={handleDragEnd}
         >
-          <Table>
-            <TableHeader>
+          <Table className="table-fixed w-full">
+            <TableHeader className="sticky top-0 z-10 bg-white shadow-sm">
               <TableRow>
                 <TableHead className="w-[80px]">工艺段</TableHead>
-                <TableHead className="w-[120px]">步骤ID</TableHead>
-                <TableHead>步骤名称</TableHead>
+                <TableHead className="w-[100px]">步骤ID</TableHead>
+                <TableHead className="w-[15%]">步骤名称</TableHead>
                 <TableHead className="w-[100px]">工艺类型</TableHead>
-                <TableHead>位置/设备</TableHead>
-                <TableHead>原料/内容</TableHead>
-                <TableHead>关键参数</TableHead>
-                <TableHead>预计耗时</TableHead>
-                <TableHead>调度约束</TableHead>
-                <TableHead className="w-[100px]">操作</TableHead>
+                <TableHead className="w-[120px]">位置/设备</TableHead>
+                <TableHead className="w-[15%]">原料/内容</TableHead>
+                <TableHead className="w-[200px]">关键参数</TableHead>
+                <TableHead className="w-[100px]">预计耗时</TableHead>
+                <TableHead className="w-[120px]">调度约束</TableHead>
+                <TableHead className="w-[80px]">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -754,10 +755,14 @@ export function RecipeTable() {
                                 />
                               ) : (
                                 <span
-                                  className={`${canEdit ? 'cursor-pointer hover:text-blue-600' : 'cursor-not-allowed opacity-60'}`}
+                                  className={cn(
+                                    canEdit ? 'cursor-pointer hover:text-blue-600' : 'cursor-not-allowed opacity-60',
+                                    'min-w-[80px] inline-block',
+                                    !subStep.label && canEdit && 'border border-dashed border-gray-300 px-2 py-1 rounded text-gray-400'
+                                  )}
                                   onClick={() => canEdit && handleStartEditSubStep(subStep)}
                                 >
-                                  {subStep.label}
+                                  {subStep.label || '未命名'}
                                   {!canEdit && <Lock className="ml-1 inline h-3 w-3" />}
                                 </span>
                               )}
@@ -819,28 +824,30 @@ export function RecipeTable() {
                                 </span>
                               )}
                             </TableCell>
-                            <TableCell>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  if (!canEdit) {
-                                    alert('需要编辑权限或进入演示模式');
-                                    return;
-                                  }
-                                  setParamsModalSubStepId(subStep.id);
-                                }}
-                                className="w-full h-auto py-2 px-3 whitespace-normal min-h-[2rem]"
-                                disabled={!canEdit}
-                                title={!canEdit ? '需要编辑权限' : '点击编辑参数'}
-                              >
-                                <div className="flex items-start w-full">
-                                  <Edit2 className="mr-2 h-3 w-3 mt-1 shrink-0 opacity-50" />
-                                  <div className="flex-1">
-                                    <SubStepParamsCell subStep={subStep} />
+                            <TableCell className="max-w-[200px]">
+                              <div className="overflow-hidden">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    if (!canEdit) {
+                                      alert('需要编辑权限或进入演示模式');
+                                      return;
+                                    }
+                                    setParamsModalSubStepId(subStep.id);
+                                  }}
+                                  className="w-full h-auto py-2 px-3 text-left min-h-[2rem]"
+                                  disabled={!canEdit}
+                                  title={!canEdit ? '需要编辑权限' : '点击编辑参数'}
+                                >
+                                  <div className="flex items-start w-full overflow-hidden">
+                                    <Edit2 className="mr-2 h-3 w-3 mt-1 shrink-0 opacity-50" />
+                                    <div className="flex-1 min-w-0">
+                                      <SubStepParamsCell subStep={subStep} />
+                                    </div>
                                   </div>
-                                </div>
-                              </Button>
+                                </Button>
+                              </div>
                             </TableCell>
                             <TableCell>
                               <span className="text-xs text-gray-600">
