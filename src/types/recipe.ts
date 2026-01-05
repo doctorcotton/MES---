@@ -68,14 +68,29 @@ export interface CompoundingAdditive {
 }
 
 /**
+ * 水量模式枚举
+ */
+export type WaterVolumeMode = 'ratio' | 'fixed';
+
+/**
+ * 料水比范围
+ */
+export interface WaterRatio {
+  min: number;  // 最小比例，如 5 表示 1:5
+  max: number;  // 最大比例，如 8 表示 1:8
+}
+
+/**
  * 溶解参数接口
  */
 export interface DissolutionParams {
-  waterVolume: ConditionValue;      // 水量
-  waterTemp: TemperatureRange;       // 水温
+  waterVolumeMode: WaterVolumeMode;   // 水量模式（默认 ratio）
+  waterRatio?: WaterRatio;            // 料水比（ratio模式）
+  waterVolume?: ConditionValue;       // 水量（fixed模式）
+  waterTemp: TemperatureRange;        // 水温
   stirringTime: { value: number; unit: 'min' }; // 搅拌时间
-  stirringRate: StirringRate;        // 搅拌速率
-  transferType: TransferType;        // 赶料类型
+  stirringRate: StirringRate;         // 搅拌速率
+  transferType: TransferType;         // 赶料类型
 }
 
 /**
@@ -148,6 +163,7 @@ export interface SubStep {
   // === 迁移辅助字段 ===
   _migrated?: boolean;               // 是否已迁移到新结构
   _migrationSource?: string;          // 迁移来源（用于调试）
+  templateVersion?: number;           // 创建时的模板版本号
 }
 
 /**
@@ -212,6 +228,7 @@ export interface FlowNode {
     processName?: string;
     subStepCount?: number;
     isExpanded?: boolean;
+    displayOrder?: number; // 显示顺序（基于 processes 数组索引 + 1），用于显示 P1、P2 等标签
     // 子步骤节点数据
     subStep?: SubStep;
     // 输入来源信息（主要用于调配节点）

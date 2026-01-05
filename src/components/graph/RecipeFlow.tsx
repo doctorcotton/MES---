@@ -33,7 +33,7 @@ export function RecipeFlow() {
   const reactFlowInstance = useRef<ReactFlowInstance | null>(null);
   const prevNodesSignatureRef = useRef<string>('');
   useAutoLayout();
-  
+
   const isReadOnly = mode === 'view' && !isEditable();
 
   // 当布局完成后，自动居中显示
@@ -46,11 +46,11 @@ export function RecipeFlow() {
     if (reactFlowInstance.current && nodes.length > 0) {
       // 计算节点签名：节点ID的排序数组，用于检测节点是否真正变化
       const nodesSignature = JSON.stringify([...nodes.map(n => n.id)].sort());
-      
+
       // 只有当节点签名真正变化时才调用 fitView
       if (prevNodesSignatureRef.current !== nodesSignature) {
         prevNodesSignatureRef.current = nodesSignature;
-        
+
         // 延迟执行，确保布局计算完成
         const timer = setTimeout(() => {
           reactFlowInstance.current?.fitView({ padding: 0.1, maxZoom: 1.5, minZoom: 0.5 });
@@ -91,7 +91,7 @@ export function RecipeFlow() {
     (_changes: NodeChange[]) => {
       // 只读模式下不允许任何节点变化
       if (isReadOnly) return;
-      
+
       // 节点位置变化由布局算法处理，这里不需要更新store
       // 因为节点是动态生成的，位置由布局算法计算
     },

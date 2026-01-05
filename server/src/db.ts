@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { RecipeData } from './types';
 import { initialProcesses, initialEdges } from '../../src/data/initialData';
+import { syncDefaultFields } from './migrations/syncDefaultFields';
 
 const db = new Database('recipe.db');
 
@@ -8,7 +9,7 @@ const db = new Database('recipe.db');
 export function initDatabase() {
   // 删除旧表（如果存在）
   db.exec(`DROP TABLE IF EXISTS recipes`);
-  
+
   // 创建新配方表
   db.exec(`
     CREATE TABLE recipes (
@@ -21,6 +22,37 @@ export function initDatabase() {
       updated_by TEXT
     )
   `);
+
+  // Create field config table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS process_field_configs (
+      id TEXT PRIMARY KEY,
+      process_type TEXT NOT NULL,
+      key TEXT NOT NULL,
+      label TEXT NOT NULL,
+      input_type TEXT NOT NULL,
+      unit TEXT,
+      options TEXT, -- JSON string
+      default_value TEXT, -- JSON string
+      validation TEXT, -- JSON string
+      display_condition TEXT, -- JSON string
+      sort_order INTEGER DEFAULT 0,
+      is_system INTEGER DEFAULT 0,
+      enabled INTEGER DEFAULT 1,
+      created_at TEXT,
+      updated_at TEXT,
+      UNIQUE(process_type, key)
+    );
+    CREATE INDEX IF NOT EXISTS idx_process_type ON process_field_configs(process_type);
+    CREATE INDEX IF NOT EXISTS idx_enabled ON process_field_configs(enabled);
+  `);
+
+  // Sync default fields
+  try {
+    syncDefaultFields();
+  } catch (error) {
+    console.error('Failed to sync default fields:', error);
+  }
 
   // 创建默认配方（如果不存在）
   const existing = db.prepare('SELECT id FROM recipes WHERE id = ?').get('default');
@@ -98,3 +130,132 @@ export function updateRecipe(recipeId: string, data: Omit<RecipeData, 'id'>, use
 }
 
 export { db };
+
+// Field Config Operations
+export interface FieldConfig {
+  id: string;
+  processType: string;
+  key: string;
+  label: string;
+  inputType: string;
+  unit?: string;
+  options?: any;
+  defaultValue?: any;
+  validation?: any;
+  displayCondition?: any;
+  sortOrder: number;
+  isSystem: boolean;
+  enabled: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+function mapRowToFieldConfig(row: any): FieldConfig {
+  return {
+    id: row.id,
+    processType: row.process_type,
+    key: row.key,
+    label: row.label,
+    inputType: row.input_type,
+    unit: row.unit,
+    options: row.options ? JSON.parse(row.options) : undefined,
+    defaultValue: row.default_value ? JSON.parse(row.default_value) : undefined,
+    validation: row.validation ? JSON.parse(row.validation) : undefined,
+    displayCondition: row.display_condition ? JSON.parse(row.display_condition) : undefined,
+    sortOrder: row.sort_order,
+    isSystem: !!row.is_system,
+    enabled: !!row.enabled,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+export function getFieldConfigs(processType?: string): FieldConfig[] {
+  let query = 'SELECT * FROM process_field_configs';
+  const params: any[] = [];
+
+  if (processType) {
+    query += ' WHERE process_type = ?';
+    params.push(processType);
+  }
+
+  query += ' ORDER BY process_type, sort_order';
+
+  const rows = db.prepare(query).all(...params);
+  return rows.map(mapRowToFieldConfig);
+}
+
+export function getFieldConfig(id: string): FieldConfig | null {
+  const row = db.prepare('SELECT * FROM process_field_configs WHERE id = ?').get(id);
+  return row ? mapRowToFieldConfig(row) : null;
+}
+
+export function createFieldConfig(config: FieldConfig): boolean {
+  const result = db.prepare(`
+        INSERT INTO process_field_configs (
+            id, process_type, key, label, input_type, unit, options, 
+            default_value, validation, display_condition, sort_order, 
+            is_system, enabled, created_at, updated_at
+        ) VALUES (
+            @id, @processType, @key, @label, @inputType, @unit, @options, 
+            @defaultValue, @validation, @displayCondition, @sortOrder, 
+            @isSystem, @enabled, @createdAt, @updatedAt
+        )
+    `).run({
+    ...config,
+    options: config.options ? JSON.stringify(config.options) : null,
+    defaultValue: config.defaultValue !== undefined ? JSON.stringify(config.defaultValue) : null,
+    validation: config.validation ? JSON.stringify(config.validation) : null,
+    displayCondition: config.displayCondition ? JSON.stringify(config.displayCondition) : null,
+  });
+  return result.changes > 0;
+}
+
+export function updateFieldConfig(id: string, config: Partial<FieldConfig>): boolean {
+  const sets: string[] = [];
+  const params: any = { id };
+  const validKeys = [
+    'processType', 'key', 'label', 'inputType', 'unit', 'options',
+    'defaultValue', 'validation', 'displayCondition', 'sortOrder',
+    'enabled', 'updatedAt'
+  ]; // isSystem cannot be updated normally, created_at shouldn't change
+
+  // Map camelCase to snake_case for DB
+  const dbKeyMap: Record<string, string> = {
+    processType: 'process_type',
+    inputType: 'input_type',
+    defaultValue: 'default_value',
+    displayCondition: 'display_condition',
+    sortOrder: 'sort_order',
+    updatedAt: 'updated_at'
+  };
+
+  Object.keys(config).forEach(key => {
+    if (validKeys.includes(key)) {
+      const dbKey = dbKeyMap[key] || key;
+      sets.push(`${dbKey} = @${key}`);
+
+      // Handle JSON serialization
+      let value = (config as any)[key];
+      if (['options', 'defaultValue', 'validation', 'displayCondition'].includes(key)) {
+        value = value !== undefined ? JSON.stringify(value) : null;
+      }
+      params[key] = value;
+    }
+  });
+
+  if (sets.length === 0) return false;
+
+  const result = db.prepare(`UPDATE process_field_configs SET ${sets.join(', ')} WHERE id = @id`).run(params);
+  return result.changes > 0;
+}
+
+export function deleteFieldConfig(id: string): boolean {
+  // Check if system field
+  const current = getFieldConfig(id);
+  if (current?.isSystem) return false;
+
+  const result = db.prepare('DELETE FROM process_field_configs WHERE id = ?').run(id);
+  return result.changes > 0;
+}
+

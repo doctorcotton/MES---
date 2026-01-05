@@ -89,6 +89,20 @@ export function calculateSchedule(
     };
 }
 
+/**
+ * 计算设备占用时间线（支持工厂配置上下文）
+ * @param processes 工艺流程列表
+ * @param context 设备配置上下文（研发视图或生产视图）
+ * @returns 调度结果
+ */
+export function calculateScheduleWithContext(
+    processes: Process[],
+    context: import('@/types/scheduling').DeviceConfigContext
+): ScheduleResult {
+    // 使用上下文中的激活设备池进行调度
+    return calculateSchedule(processes, context.activeDevicePool);
+}
+
 function getStepDuration(step: SubStep): number {
     return step.deviceRequirement?.occupyDuration?.value ||
         (step as any).estimatedDuration?.value ||
@@ -108,7 +122,13 @@ function scheduleStep(
     processedSteps: Set<string>,
     warnings: ScheduleWarning[]
 ) {
-    if (!step.deviceRequirement) {
+    // 兼容旧数据：如果有 deviceCode 但没有 deviceRequirement，自动构造
+    const requirement = step.deviceRequirement || (step.deviceCode ? {
+        deviceCode: step.deviceCode,
+        exclusiveUse: true
+    } : null);
+
+    if (!requirement) {
         // 没有设备需求，跳过, 但记录开始时间（假设它是瞬时的或者不占用资源）
         stepStartTimes.set(step.id, earliestStartTime);
         processedSteps.add(step.id);
@@ -116,7 +136,7 @@ function scheduleStep(
     }
 
     // 分配设备
-    const device = allocateDevice(step.deviceRequirement, devicePool, earliestStartTime, timeline);
+    const device = allocateDevice(requirement, devicePool, earliestStartTime, timeline);
 
     if (!device) {
         warnings.push({

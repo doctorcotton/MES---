@@ -3,6 +3,8 @@ import { Panel, Group, Separator } from 'react-resizable-panels';
 import { AppLayout } from './components/layout/AppLayout';
 import { RecipeTable } from './components/editor/RecipeTable';
 import { RecipeFlow } from './components/graph/RecipeFlow';
+import { GanttView } from './components/scheduling/GanttView';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from './components/ui/tabs';
 import { socketService } from './services/socketService';
 import { useCollabStore } from './store/useCollabStore';
 import { useSocketSync } from './hooks/useSocketSync';
@@ -59,20 +61,33 @@ function App() {
 
   return (
     <AppLayout>
-      <Group orientation="horizontal">
+      <Group className="h-full w-full" orientation="horizontal">
         {/* Left Panel - Recipe Table */}
         <Panel defaultSize={40} minSize={20}>
-          <div className="h-full border-r bg-slate-50">
+          <div className="h-full w-full border-r bg-slate-50">
             <RecipeTable />
           </div>
         </Panel>
 
         <Separator className="w-1 bg-slate-200 hover:bg-blue-500 transition-colors cursor-col-resize" />
 
-        {/* Right Panel - Flow Graph */}
+        {/* Right Panel - Flow Graph / Gantt View */}
         <Panel defaultSize={60} minSize={20}>
-          <div className="h-full bg-white">
-            <RecipeFlow />
+          <div className="h-full w-full bg-white flex flex-col">
+            <Tabs defaultValue="flow" className="h-full flex flex-col">
+              <div className="border-b px-4 pt-2">
+                <TabsList>
+                  <TabsTrigger value="flow">流程图</TabsTrigger>
+                  <TabsTrigger value="gantt">甘特图</TabsTrigger>
+                </TabsList>
+              </div>
+              <TabsContent value="flow" className="flex-1 overflow-hidden m-0">
+                <RecipeFlow />
+              </TabsContent>
+              <TabsContent value="gantt" className="flex-1 overflow-hidden m-0">
+                <GanttView />
+              </TabsContent>
+            </Tabs>
           </div>
         </Panel>
       </Group>

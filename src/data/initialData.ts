@@ -28,6 +28,7 @@ export const initialProcesses: Process[] = [
           params: {
             processType: ProcessType.DISSOLUTION,
             dissolutionParams: {
+              waterVolumeMode: 'fixed',
               waterVolume: { value: 1000, unit: 'L', condition: '>=' },
               waterTemp: { min: 65, max: 75, unit: '℃' },
               stirringTime: { value: 6, unit: 'min' },
@@ -101,6 +102,7 @@ export const initialProcesses: Process[] = [
           params: {
             processType: ProcessType.DISSOLUTION,
             dissolutionParams: {
+              waterVolumeMode: 'fixed',
               waterVolume: { value: 800, unit: 'L', condition: '>' },
               waterTemp: { unit: '℃' }, // 常温
               stirringTime: { value: 8, unit: 'min' },
@@ -161,6 +163,7 @@ export const initialProcesses: Process[] = [
           params: {
             processType: ProcessType.DISSOLUTION,
             dissolutionParams: {
+              waterVolumeMode: 'fixed',
               waterVolume: { value: 800, unit: 'L', condition: '>=' },
               waterTemp: { min: 25, max: 35, unit: '℃' },
               stirringTime: { value: 8, unit: 'min' },
@@ -223,6 +226,7 @@ export const initialProcesses: Process[] = [
           params: {
             processType: ProcessType.DISSOLUTION,
             dissolutionParams: {
+              waterVolumeMode: 'fixed',
               waterVolume: { value: 500, unit: 'L', condition: '>' },
               waterTemp: { unit: '℃' }, // 常温
               stirringTime: { value: 6, unit: 'min' },

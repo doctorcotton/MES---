@@ -60,18 +60,18 @@ function estimateNodeHeight(node: FlowNode, nodeWidth: number): number {
   const lineHeight = LAYOUT_CONFIG.lineHeight;    // 每行参数高度
   const padding = 20;       // 上下内边距
   const contentPadding = 12; // 内容区域左右padding
-  
+
   // 汇总节点高度
   if (node.type === 'processSummaryNode') {
     return headerHeight + baseBodyHeight + padding;
   }
-  
+
   // 子步骤节点高度
   if (node.type === 'subStepNode' && node.data.subStep) {
     const subStep = node.data.subStep;
     let paramLines = 0;
     let contentLines = 0;
-    
+
     // 估算位置和原料的换行行数
     const availableWidth = nodeWidth - (contentPadding * 2);
     if (subStep.deviceCode) {
@@ -80,7 +80,7 @@ function estimateNodeHeight(node: FlowNode, nodeWidth: number): number {
     if (subStep.ingredients) {
       contentLines += estimateTextLines(`原料: ${subStep.ingredients}`, availableWidth);
     }
-    
+
     // 根据工艺类型估算参数行数
     switch (subStep.processType) {
       case ProcessType.DISSOLUTION:
@@ -112,12 +112,12 @@ function estimateNodeHeight(node: FlowNode, nodeWidth: number): number {
       default:
         paramLines = 1;
     }
-    
+
     // 总高度 = 标题 + 内容行 + 参数行 + 内边距
     const totalLines = Math.max(contentLines, 2) + paramLines; // 至少2行基础内容
     return headerHeight + (totalLines * lineHeight) + padding;
   }
-  
+
   return headerHeight + baseBodyHeight + padding;
 }
 
@@ -125,9 +125,9 @@ function estimateNodeHeight(node: FlowNode, nodeWidth: number): number {
  * 递归使单线连接的下游节点跟随父节点的 X 坐标
  */
 function propagateChainCentering(
-  nodeId: string, 
-  x: number, 
-  nodePositions: Record<string, { x: number; y: number }>, 
+  nodeId: string,
+  x: number,
+  nodePositions: Record<string, { x: number; y: number }>,
   edges: RecipeEdge[],
   nodes: FlowNode[]
 ) {
@@ -136,64 +136,76 @@ function propagateChainCentering(
     const childId = edge.target;
     const childIncoming = edges.filter(e => e.target === childId);
     // 如果该子节点只有这一个输入（单线链路），则强制对齐
-      if (childIncoming.length === 1) {
-        if (nodePositions[childId]) {
-          nodePositions[childId].x = x;
-          propagateChainCentering(childId, x, nodePositions, edges, nodes);
-        }
+    if (childIncoming.length === 1) {
+      if (nodePositions[childId]) {
+        nodePositions[childId].x = x;
+        propagateChainCentering(childId, x, nodePositions, edges, nodes);
       }
+    }
   });
 }
 
 /**
- * 根据投料顺序 (sequenceOrder) 整分支平移，从根本上防止连线交叉
+ * 根据投料顺序 (sequenceOrder) 和 工艺逻辑顺序 整分支平移
  * 系统性解决方案：不仅移动直接父节点，而是移动整个上游分支
  */
 function reorderBranchesHorizontally(
-  nodes: FlowNode[], 
-  edges: RecipeEdge[], 
-  nodePositions: Record<string, { x: number; y: number }>
+  nodes: FlowNode[],
+  edges: RecipeEdge[],
+  nodePositions: Record<string, { x: number; y: number }>,
+  processIndexMap: Record<string, number>
 ) {
   // 找到所有汇聚节点
   nodes.forEach(targetNode => {
     const incomingEdges = edges.filter(e => e.target === targetNode.id);
     if (incomingEdges.length <= 1) return;
-    
-    // 按 sequenceOrder 排序
-    const sortedEdges = [...incomingEdges].sort((a, b) => 
-      (a.data?.sequenceOrder || 0) - (b.data?.sequenceOrder || 0)
-    );
-    
+
+    // 按 sequenceOrder 优先，Process Index 次之 排序
+    const sortedEdges = [...incomingEdges].sort((a, b) => {
+      const seqDiff = (a.data?.sequenceOrder || 0) - (b.data?.sequenceOrder || 0);
+      if (seqDiff !== 0) return seqDiff;
+
+      // 如果 sequenceOrder 相同，使用 Process Index
+      // 需要找到源节点对应的 Process ID
+      const sourceNodeA = nodes.find(n => n.id === a.source);
+      const sourceNodeB = nodes.find(n => n.id === b.source);
+
+      const pIdxA = processIndexMap[sourceNodeA?.data.processId || ''] ?? 9999;
+      const pIdxB = processIndexMap[sourceNodeB?.data.processId || ''] ?? 9999;
+
+      return pIdxA - pIdxB;
+    });
+
     // 为每个输入分支收集信息
     const branches = sortedEdges.map(edge => {
       const directParent = edge.source;
       // 获取整个上游分支（包括直接父节点及其所有祖先）
       const upstreamNodes = getUpstreamNodes(directParent, edges, nodes);
-      
+
       // 计算分支质心（所有上游节点的平均X）
       const validNodes = upstreamNodes.filter(id => nodePositions[id]);
       if (validNodes.length === 0) {
         return { directParent, upstreamNodes: [], centroidX: nodePositions[directParent]?.x || 0, sequenceOrder: edge.data?.sequenceOrder || 0 };
       }
-      
-      const centroidX = validNodes.reduce((sum, id) => 
+
+      const centroidX = validNodes.reduce((sum, id) =>
         sum + (nodePositions[id]?.x || 0), 0
       ) / validNodes.length;
-      
+
       return { directParent, upstreamNodes, centroidX, sequenceOrder: edge.data?.sequenceOrder || 0 };
     });
-    
+
     // 按当前质心排序，得到可用的X位置序列
     const sortedCentroidX = [...branches]
       .sort((a, b) => a.centroidX - b.centroidX)
       .map(b => b.centroidX);
-    
+
     // 按 sequenceOrder 重新分配位置：将整个分支平移
     branches.forEach((branch, index) => {
       const oldCentroidX = branch.centroidX;
       const newCentroidX = sortedCentroidX[index];
       const deltaX = newCentroidX - oldCentroidX;
-      
+
       if (Math.abs(deltaX) > 1) { // 只有当偏移量显著时才移动
         // 平移整个分支的所有节点
         branch.upstreamNodes.forEach(nodeId => {
@@ -207,50 +219,136 @@ function reorderBranchesHorizontally(
 }
 
 /**
+ * 递归平移分支（向下游传播 deltaX）
+ * 仅对单父节点的子节点生效，保持子树形状
+ */
+function shiftBranch(
+  nodeId: string,
+  deltaX: number,
+  nodes: FlowNode[],
+  edges: RecipeEdge[],
+  nodePositions: Record<string, { x: number; y: number }>
+) {
+  if (Math.abs(deltaX) < 1) return;
+
+  // 移动当前节点
+  if (nodePositions[nodeId]) {
+    nodePositions[nodeId].x += deltaX;
+  }
+
+  // 查找所有子节点
+  const children = edges
+    .filter(e => e.source === nodeId)
+    .map(e => e.target);
+
+  children.forEach(childId => {
+    // 检查子节点是否只有这一个父节点（独占分支）
+    const incoming = edges.filter(e => e.target === childId);
+    if (incoming.length === 1) {
+      shiftBranch(childId, deltaX, nodes, edges, nodePositions);
+    }
+  });
+}
+
+/**
+ * 根节点（起始节点）重排序
+ * 确保流程起点的水平顺序符合表格中的逻辑顺序
+ */
+function reorderRootNodes(
+  nodes: FlowNode[],
+  edges: RecipeEdge[],
+  nodePositions: Record<string, { x: number; y: number }>,
+  processIndexMap: Record<string, number>
+) {
+  // 1. 找到所有根节点（入度为0的节点）
+  const rootNodes = nodes.filter(node =>
+    !edges.some(e => e.target === node.id)
+  );
+
+  if (rootNodes.length <= 1) return;
+
+  // 2. 按 Process Index 排序
+  const sortedRoots = [...rootNodes].sort((a, b) => {
+    const pIdxA = processIndexMap[a.data.processId || ''] ?? 9999;
+    const pIdxB = processIndexMap[b.data.processId || ''] ?? 9999;
+
+    // 如果是同一个 Process 的不同子步骤（理论上根节点通常是Process的主节点或第一个子节点）
+    // 使用 displayOrder 辅助排序
+    if (pIdxA === pIdxB) {
+      return (a.data.displayOrder || 0) - (b.data.displayOrder || 0);
+    }
+    return pIdxA - pIdxB;
+  });
+
+  // 3. 获取物理位置槽
+  const currentXs = rootNodes
+    .map(n => ({ id: n.id, x: nodePositions[n.id]?.x || 0 }))
+    .sort((a, b) => a.x - b.x);
+
+  // 4. 应用位置并移动分支
+  sortedRoots.forEach((node, index) => {
+    const currentPos = nodePositions[node.id];
+    if (!currentPos) return;
+
+    // 目标 X 是物理上第 index 小的 X
+    if (index < currentXs.length) {
+      const targetX = currentXs[index].x;
+      const deltaX = targetX - currentPos.x;
+
+      if (Math.abs(deltaX) > 1) {
+        // 使用递归平移，保持子树形状
+        shiftBranch(node.id, deltaX, nodes, edges, nodePositions);
+      }
+    }
+  });
+}
+
+
+/**
  * 计算反向层级：从终点节点开始反向BFS，标记每个节点距离终点的步数
  * 这样相同反向层级的节点可以对齐在同一Y坐标
  */
 function calculateReverseLevel(nodes: FlowNode[], edges: RecipeEdge[]): Record<string, number> {
   const levels: Record<string, number> = {};
-  
+
   // 1. 找到终点节点（出度为0的节点）
   const endNodes = nodes.filter(n => !edges.some(e => e.source === n.id));
-  
+
   if (endNodes.length === 0) {
     // 如果没有终点节点，从所有节点开始，层级为0
     nodes.forEach(n => levels[n.id] = 0);
     return levels;
   }
-  
+
   // 2. 反向BFS：从终点节点开始，向上遍历
   const queue: Array<{ id: string; level: number }> = endNodes.map(n => ({ id: n.id, level: 0 }));
   const visited = new Set<string>();
-  
+
   while (queue.length > 0) {
     const { id, level } = queue.shift()!;
-    
+
     if (visited.has(id)) continue;
     visited.add(id);
     levels[id] = level;
-    
+
     // 找到所有指向当前节点的节点（父节点）
     const parents = edges
       .filter(e => e.target === id)
       .map(e => e.source)
       .filter(p => !visited.has(p));
-    
+
     parents.forEach(p => {
       queue.push({ id: p, level: level + 1 });
     });
   }
-  
+
   // 处理孤立节点（没有连接关系的节点）
   nodes.forEach(node => {
     if (!(node.id in levels)) {
       levels[node.id] = 0;
     }
   });
-  
+
   return levels;
 }
 
@@ -265,20 +363,20 @@ function getUpstreamNodes(
 ): string[] {
   if (visited.has(nodeId)) return [];
   visited.add(nodeId);
-  
+
   const result = [nodeId];
-  
+
   // 找到所有指向当前节点的边（父节点）
   const parents = edges
     .filter(e => e.target === nodeId)
     .map(e => e.source);
-  
+
   // 递归获取所有父节点的上游节点
   parents.forEach(parentId => {
     const upstream = getUpstreamNodes(parentId, edges, nodes, visited);
     result.push(...upstream);
   });
-  
+
   return result;
 }
 
@@ -295,18 +393,18 @@ function calculateConvergenceNodePosition(
   // 获取所有输入节点
   const inputEdges = edges.filter(e => e.target === node.id);
   const inputIds = inputEdges.map(e => e.source);
-  
+
   if (inputIds.length === 0) {
     return nodePositions[node.id]?.x || 0;
   }
-  
+
   // 为每个输入分支计算权重和质心
   const branchWeights: Array<{ weight: number; centroidX: number }> = [];
-  
+
   inputIds.forEach(inputId => {
     // 获取该输入节点的所有上游节点（包括自身）
     const subTree = getUpstreamNodes(inputId, edges, nodes);
-    
+
     // 计算子树中所有节点的x坐标平均值（质心）
     const validNodes = subTree.filter(id => nodePositions[id]);
     if (validNodes.length === 0) {
@@ -320,25 +418,25 @@ function calculateConvergenceNodePosition(
       }
       return;
     }
-    
+
     const centroidX = validNodes.reduce((sum, id) => sum + nodePositions[id].x, 0) / validNodes.length;
     const weight = validNodes.length;
-    
+
     branchWeights.push({ weight, centroidX });
   });
-  
+
   if (branchWeights.length === 0) {
     return nodePositions[node.id]?.x || 0;
   }
-  
+
   // 计算加权平均
   const totalWeight = branchWeights.reduce((sum, b) => sum + b.weight, 0);
   if (totalWeight === 0) {
     return nodePositions[node.id]?.x || 0;
   }
-  
+
   const weightedX = branchWeights.reduce((sum, b) => sum + b.centroidX * b.weight, 0) / totalWeight;
-  
+
   return weightedX;
 }
 
@@ -352,10 +450,10 @@ function calculateAdaptiveSpacing(
   baseSpacing: number = LAYOUT_CONFIG.baseRankSep
 ): number {
   const inputCount = edges.filter(e => e.target === node.id).length;
-  
+
   // 基础间距，每多一个输入增加额外间距
   const extraSpacing = Math.max(0, (inputCount - 1) * LAYOUT_CONFIG.extraSpacingPerInput);
-  
+
   return baseSpacing + extraSpacing;
 }
 
@@ -367,7 +465,7 @@ function groupByLevel(
   levels: Record<string, number>
 ): Record<number, FlowNode[]> {
   const groups: Record<number, FlowNode[]> = {};
-  
+
   nodes.forEach(node => {
     const level = levels[node.id] || 0;
     if (!groups[level]) {
@@ -375,7 +473,7 @@ function groupByLevel(
     }
     groups[level].push(node);
   });
-  
+
   return groups;
 }
 
@@ -392,30 +490,30 @@ function improvedClusterSimilarSizes(
   if (sizes.length === 1) {
     return new Map([[sizes[0].id, sizes[0].value]]);
   }
-  
+
   // 按尺寸从小到大排序
   const sorted = [...sizes].sort((a, b) => a.value - b.value);
-  
+
   // 聚类分组
-  const clusters: Array<{ 
-    ids: string[]; 
+  const clusters: Array<{
+    ids: string[];
     minValue: number;
     maxValue: number;
   }> = [];
-  
+
   let currentCluster = {
     ids: [sorted[0].id],
     minValue: sorted[0].value,
     maxValue: sorted[0].value
   };
-  
+
   for (let i = 1; i < sorted.length; i++) {
     const current = sorted[i];
-    
+
     // 关键改进：检查加入后组内最大差异
     const newMaxValue = current.value;
     const groupSpan = (newMaxValue - currentCluster.minValue) / currentCluster.minValue;
-    
+
     // 如果组内差异仍在阈值内，归入当前组
     if (groupSpan <= threshold) {
       currentCluster.ids.push(current.id);
@@ -431,12 +529,12 @@ function improvedClusterSimilarSizes(
     }
   }
   clusters.push(currentCluster);
-  
+
   // 单节点合并策略（可选）
   if (minGroupSize >= 2) {
     mergeSingletonClusters(clusters, threshold);
   }
-  
+
   // 构建映射：节点ID -> 统一尺寸（使用组内最大值）
   const result = new Map<string, number>();
   clusters.forEach(cluster => {
@@ -444,7 +542,7 @@ function improvedClusterSimilarSizes(
       result.set(id, cluster.maxValue);
     });
   });
-  
+
   return result;
 }
 
@@ -453,8 +551,8 @@ function improvedClusterSimilarSizes(
  * 减少碎片化，提高统一效果
  */
 function mergeSingletonClusters(
-  clusters: Array<{ 
-    ids: string[]; 
+  clusters: Array<{
+    ids: string[];
     minValue: number;
     maxValue: number;
   }>,
@@ -465,12 +563,12 @@ function mergeSingletonClusters(
     if (clusters[i].ids.length === 1) {
       const singletonValue = clusters[i].minValue;
       let merged = false;
-      
+
       // 尝试合并到前一组
       if (i > 0) {
         const prevCluster = clusters[i - 1];
         const diffToPrev = (singletonValue - prevCluster.minValue) / prevCluster.minValue;
-        
+
         // 稍微放宽阈值（1.5倍），优先合并
         if (diffToPrev <= threshold * 1.5) {
           prevCluster.ids.push(...clusters[i].ids);
@@ -480,12 +578,12 @@ function mergeSingletonClusters(
           continue;
         }
       }
-      
+
       // 如果没合并成功，尝试合并到后一组
       if (!merged && i < clusters.length - 1) {
         const nextCluster = clusters[i + 1];
         const diffToNext = (nextCluster.maxValue - singletonValue) / singletonValue;
-        
+
         if (diffToNext <= threshold * 1.5) {
           nextCluster.ids.push(...clusters[i].ids);
           nextCluster.minValue = Math.min(nextCluster.minValue, singletonValue);
@@ -517,41 +615,41 @@ function calculateIntelligentUnifiedSizes(
     [ProcessType.FLAVOR_ADDITION]: [],
     [ProcessType.OTHER]: []
   };
-  
+
   nodes.forEach(node => {
     if (node.type === 'subStepNode' && node.data.subStep) {
       const type = node.data.subStep.processType;
       nodesByType[type].push(node);
     }
   });
-  
+
   const unifiedWidths = new Map<string, number>();
   const unifiedHeights = new Map<string, number>();
-  
+
   // 对每个类型组进行智能聚类
   Object.values(nodesByType).forEach((typeNodes) => {
     if (typeNodes.length === 0) return;
-    
+
     // 收集该类型所有节点的宽度和高度
     const widthData = typeNodes.map(node => ({
       id: node.id,
       value: initialWidths[node.id]
     }));
-    
+
     const heightData = typeNodes.map(node => ({
       id: node.id,
       value: initialHeights[node.id]
     }));
-    
+
     // 改进贪心聚类宽度（阈值15%，启用单节点合并）
     const clusteredWidths = improvedClusterSimilarSizes(widthData, 0.15, 2);
     clusteredWidths.forEach((width, id) => unifiedWidths.set(id, width));
-    
+
     // 改进贪心聚类高度（阈值20%，高度变化容忍度更高）
     const clusteredHeights = improvedClusterSimilarSizes(heightData, 0.20, 2);
     clusteredHeights.forEach((height, id) => unifiedHeights.set(id, height));
   });
-  
+
   return { unifiedWidths, unifiedHeights };
 }
 
@@ -569,52 +667,52 @@ function compressParallelBranches(
 ): void {
   // 按层级分组
   const levelGroups = groupByLevel(nodes, levels);
-  
+
   // 为每个层级处理并行节点
   Object.values(levelGroups).forEach(levelNodes => {
     if (levelNodes.length <= 1) return; // 单个节点无需压缩
-    
+
     // 按当前X坐标排序
     const sortedNodes = [...levelNodes].sort((a, b) => {
       const posA = nodePositions[a.id]?.x || 0;
       const posB = nodePositions[b.id]?.x || 0;
       return posA - posB;
     });
-    
+
     // 检查每对相邻节点是否有直接连接
     for (let i = 0; i < sortedNodes.length - 1; i++) {
       const nodeA = sortedNodes[i];
       const nodeB = sortedNodes[i + 1];
-      
+
       // 检查是否有直接连接（A->B 或 B->A）
       const hasDirectConnection = edges.some(
         e => (e.source === nodeA.id && e.target === nodeB.id) ||
-             (e.source === nodeB.id && e.target === nodeA.id)
+          (e.source === nodeB.id && e.target === nodeA.id)
       );
-      
+
       // 如果没有直接连接，则视为并行分支，可以压缩
       if (!hasDirectConnection) {
         const posA = nodePositions[nodeA.id];
         const posB = nodePositions[nodeB.id];
         if (!posA || !posB) continue;
-        
+
         const widthA = calculatedNodeWidths[nodeA.id] || LAYOUT_CONFIG.baseNodeWidth;
         const widthB = calculatedNodeWidths[nodeB.id] || LAYOUT_CONFIG.baseNodeWidth;
-        
+
         // 计算当前间距
         const currentSpacing = posB.x - posA.x - (widthA / 2) - (widthB / 2);
-        
+
         // 计算目标间距（压缩后的间距）
         const minSpacing = Math.max(
           LAYOUT_CONFIG.minNodeSep * compressionRatio,
           (widthA + widthB) / 2 * 0.2 // 至少保持节点宽度的20%作为最小间距
         );
-        
+
         // 如果当前间距大于目标间距，则压缩
         if (currentSpacing > minSpacing) {
           const targetSpacing = currentSpacing * compressionRatio;
           const deltaX = currentSpacing - targetSpacing;
-          
+
           // 将右侧节点向左移动（压缩间距）
           // 同时移动该节点右侧的所有节点，保持相对位置
           for (let j = i + 1; j < sortedNodes.length; j++) {
@@ -632,8 +730,10 @@ function compressParallelBranches(
 export function useAutoLayout() {
   const nodes = useFlowNodes(); // 使用动态生成的节点数组
   const edges = useFlowEdges(); // 使用动态生成的连线数组
+  const processes = useRecipeStore((state) => state.processes); // 获取 processes 数组用于顺序检测
   const prevNodesRef = useRef<string>('');
   const prevEdgesRef = useRef<string>('');
+  const prevProcessOrderRef = useRef<string>('');
 
   useEffect(() => {
     if (nodes.length === 0) return;
@@ -644,20 +744,33 @@ export function useAutoLayout() {
     );
 
     // 创建节点和边的签名用于比较
-    const nodesSignature = JSON.stringify(nodes.map(n => ({ id: n.id, data: n.data })));
+    // 确保包含 displayOrder 字段，以便检测顺序变化
+    const nodesSignature = JSON.stringify(nodes.map(n => ({
+      id: n.id,
+      data: {
+        ...n.data,
+        displayOrder: n.data.displayOrder // 明确包含 displayOrder
+      }
+    })));
     const edgesSignature = JSON.stringify(edges.map(e => ({ source: e.source, target: e.target, data: e.data })));
+    // 添加 processes 顺序签名，确保顺序变化时触发重新布局
+    const processOrderSignature = processes.map(p => p.id).join(',');
 
-    // 如果节点或边的数据没有变化，且不是所有节点都是临时 position，跳过布局计算
-    if (prevNodesRef.current === nodesSignature && prevEdgesRef.current === edgesSignature && !allNodesHaveTempPosition) {
+    // 如果节点或边的数据没有变化，且 processes 顺序没有变化，且不是所有节点都是临时 position，跳过布局计算
+    if (prevNodesRef.current === nodesSignature &&
+      prevEdgesRef.current === edgesSignature &&
+      prevProcessOrderRef.current === processOrderSignature &&
+      !allNodesHaveTempPosition) {
       return;
     }
 
     prevNodesRef.current = nodesSignature;
     prevEdgesRef.current = edgesSignature;
+    prevProcessOrderRef.current = processOrderSignature;
 
     // ========== 步骤1: 计算反向层级 ==========
     const reverseLevels = calculateReverseLevel(nodes, edges);
-    
+
     // ========== 步骤2: 计算每个节点的输入边 ==========
     const nodeIncomingEdges: Record<string, typeof edges> = {};
     edges.forEach(edge => {
@@ -670,7 +783,7 @@ export function useAutoLayout() {
     // ========== 步骤3: 计算初始尺寸（使用分档策略和动态估算） ==========
     const initialWidths: Record<string, number> = {};
     const initialHeights: Record<string, number> = {};
-    
+
     // 第一遍：计算宽度（基于输入数量）
     nodes.forEach(node => {
       const incoming = nodeIncomingEdges[node.id] || [];
@@ -678,42 +791,42 @@ export function useAutoLayout() {
       const width = calculateTieredWidth(inputCount);
       initialWidths[node.id] = width;
     });
-    
+
     // 第二遍：基于宽度计算高度（考虑换行）
     nodes.forEach(node => {
       const width = initialWidths[node.id];
       const height = estimateNodeHeight(node, width);
       initialHeights[node.id] = height;
     });
-    
+
     // ========== 步骤3.5: 智能统一尺寸（新增） ==========
     const { unifiedWidths, unifiedHeights } = calculateIntelligentUnifiedSizes(
       nodes,
       initialWidths,
       initialHeights
     );
-    
+
     // ========== 步骤4: 应用统一尺寸 ==========
     const calculatedNodeWidths: Record<string, number> = {};
     const calculatedNodeHeights: Record<string, number> = {};
-    
+
     nodes.forEach(node => {
       // 优先使用统一尺寸，否则使用初始尺寸
       calculatedNodeWidths[node.id] = unifiedWidths.get(node.id) || initialWidths[node.id];
       calculatedNodeHeights[node.id] = unifiedHeights.get(node.id) || initialHeights[node.id];
     });
-    
+
     // ========== 步骤4: 使用dagre计算初始水平布局 ==========
     const dagreGraph = new dagre.graphlib.Graph();
     dagreGraph.setDefaultEdgeLabel(() => ({}));
-    
+
     // 计算动态节点间距（基于平均宽度，更紧凑）
     const nodeWidths = Object.values(calculatedNodeWidths);
     const avgNodeWidth = nodeWidths.reduce((a, b) => a + b, 0) / nodeWidths.length;
     // 使用平均宽度的40%作为间距（从0.8降至0.4，减少50%）
     const dynamicNodeSep = Math.max(LAYOUT_CONFIG.minNodeSep, avgNodeWidth * 0.4);
-    
-    dagreGraph.setGraph({ 
+
+    dagreGraph.setGraph({
       rankdir: 'TB',
       nodesep: dynamicNodeSep,
       ranksep: LAYOUT_CONFIG.baseRankSep,
@@ -721,12 +834,12 @@ export function useAutoLayout() {
       marginy: 50,
       // 移除 align: 'DL'，使用中心对齐
     });
-    
+
     // 添加节点到 dagre graph
     nodes.forEach(node => {
-      dagreGraph.setNode(node.id, { 
-        width: calculatedNodeWidths[node.id], 
-        height: calculatedNodeHeights[node.id] 
+      dagreGraph.setNode(node.id, {
+        width: calculatedNodeWidths[node.id],
+        height: calculatedNodeHeights[node.id]
       });
     });
 
@@ -745,104 +858,129 @@ export function useAutoLayout() {
       initialPositions[node.id] = { x: pos.x, y: pos.y };
     });
 
-    // ========== 步骤5: 按反向层级重新计算Y坐标 ==========
+    // ========== 步骤5: 基于 displayOrder 计算 X 坐标，使用反向层级计算 Y 坐标 ==========
+    // 核心改进：X 坐标直接由 displayOrder（表格顺序）决定，而非 dagre
+    // 这样确保了流程图的水平排列始终与表格顺序一致
+
     const levelGroups = groupByLevel(nodes, reverseLevels);
     // 反向层级：level 0是终点（最底层），level越大越靠上
-    // 所以从大到小排序，从顶层到底层
     const levelKeys = Object.keys(levelGroups).map(Number).sort((a, b) => b - a);
-    
-    // 计算每层的Y坐标，使用自适应间距和动态高度
+
+    // 5.1: 计算每个 Process 的水平区域（基于 displayOrder）
+    const PROCESS_LANE_WIDTH = 300; // 每个工艺段的水平"车道"宽度
+    const LANE_GAP = 64; // 车道之间的间隙（原80，缩小20%）
+    const START_X = 150; // 起始 X 偏移
+
+    // 构建 processId -> displayOrder 映射
+    const processDisplayOrder: Record<string, number> = {};
+    nodes.forEach(node => {
+      if (node.data.processId && node.data.displayOrder !== undefined) {
+        // 每个 processId 只记录一次（使用最小的 displayOrder）
+        if (processDisplayOrder[node.data.processId] === undefined) {
+          processDisplayOrder[node.data.processId] = node.data.displayOrder;
+        }
+      }
+    });
+
+    // 5.2: 为每个节点计算 X 坐标（基于其所属 Process 的 displayOrder）
+    // 同一 Process 的所有节点共享同一 X 坐标区域
     const nodePositions: Record<string, { x: number; y: number }> = {};
-    let currentY = 50; // 起始Y坐标（从顶部开始）
-    
+
+    // 根据 displayOrder 分组节点
+    const nodesByDisplayOrder: Record<number, FlowNode[]> = {};
+    nodes.forEach(node => {
+      const displayOrder = node.data.displayOrder || 1;
+      if (!nodesByDisplayOrder[displayOrder]) {
+        nodesByDisplayOrder[displayOrder] = [];
+      }
+      nodesByDisplayOrder[displayOrder].push(node);
+    });
+
+    // 为每个 displayOrder 组分配 X 坐标
+    const displayOrders = Object.keys(nodesByDisplayOrder).map(Number).sort((a, b) => a - b);
+    displayOrders.forEach((displayOrder, laneIndex) => {
+      const laneX = START_X + laneIndex * (PROCESS_LANE_WIDTH + LANE_GAP);
+      nodesByDisplayOrder[displayOrder].forEach(node => {
+        // 初始化 X 坐标，Y 坐标稍后计算
+        nodePositions[node.id] = { x: laneX, y: 0 };
+      });
+    });
+
+    // 5.3: 计算 Y 坐标（使用自适应间距和动态高度）
+    // 增加起始 Y 偏移，避免第一行节点上方的圈号被遮挡
+    let currentY = 80;
+
     levelKeys.forEach((level, index) => {
       const levelNodes = levelGroups[level];
-      
-      // 计算这一层到下一层（更小的level，更靠近终点）的间距
+
+      // 计算层间距
       if (index > 0) {
-        // 系统性解决垂直遮挡：使用上一层的最大节点高度
         const prevLevel = levelKeys[index - 1];
         const prevLevelNodes = levelGroups[prevLevel];
         const maxPrevHeight = Math.max(...prevLevelNodes.map(n => {
           const cachedHeight = calculatedNodeHeights[n.id];
           if (cachedHeight) return cachedHeight;
-          // 如果缓存中没有，使用当前宽度重新估算
           const width = calculatedNodeWidths[n.id] || LAYOUT_CONFIG.baseNodeWidth;
           return estimateNodeHeight(n, width);
         }));
-        
-        // 层间距 = 上一层最大高度的一半（因为Y坐标是中心点）+ 下一层最大高度的一半 + 安全边距
-        // 这确保了即使节点内容撑高，也不会遮挡下一层
+
         const currentLevelMaxHeight = Math.max(...levelNodes.map(n => {
           const cachedHeight = calculatedNodeHeights[n.id];
           if (cachedHeight) return cachedHeight;
           const width = calculatedNodeWidths[n.id] || LAYOUT_CONFIG.baseNodeWidth;
           return estimateNodeHeight(n, width);
         }));
-        
-        // 箭头长度 = 上一层底部到下一层顶部的距离
-        const baseSpacing = (maxPrevHeight / 2) + (currentLevelMaxHeight / 2) + 60;
-        
-        // 如果当前层有多个输入，增加额外间距
+
+        // 基础间距 = 上层节点底部到当前层节点顶部的距离
+        // 增加乘数因子（1.2）来补偿高度估算可能的不足
+        const heightBuffer = 1.2;
+        const baseSpacing = (maxPrevHeight * heightBuffer / 2) + (currentLevelMaxHeight * heightBuffer / 2) + 80;
+
+        // 额外间距（多输入节点需要更多空间用于显示入口圈号）
         const maxInputNode = levelNodes.reduce((max, node) => {
           const maxInputs = nodeIncomingEdges[max.id]?.length || 0;
           const nodeInputs = nodeIncomingEdges[node.id]?.length || 0;
           return nodeInputs > maxInputs ? node : max;
         }, levelNodes[0]);
-        
+
         const extraSpacing = calculateAdaptiveSpacing(maxInputNode, edges) - LAYOUT_CONFIG.baseRankSep;
-        const spacing = baseSpacing + Math.max(0, extraSpacing);
-        
+
+        // 最终间距，确保最小值为 100px
+        const MIN_LEVEL_SPACING = 100;
+        const spacing = Math.max(MIN_LEVEL_SPACING, baseSpacing + Math.max(0, extraSpacing));
+
         currentY += spacing;
       }
-      
-      // 为这一层的所有节点分配Y坐标
+
+      // 为这一层的所有节点分配 Y 坐标（X 已在上方基于 displayOrder 分配）
       levelNodes.forEach(node => {
-        // 先使用dagre计算的X坐标
-        nodePositions[node.id] = {
-          x: initialPositions[node.id]?.x || 0,
-          y: currentY
-        };
+        if (nodePositions[node.id]) {
+          nodePositions[node.id].y = currentY;
+        }
       });
     });
 
-    // ========== 步骤5.5: 压缩并行分支间距 ==========
-    // 在dagre布局后，压缩同一层级内无直接连接的并行节点间距
-    compressParallelBranches(
-      nodes,
-      edges,
-      reverseLevels,
-      nodePositions,
-      calculatedNodeWidths,
-      0.65 // 压缩到标准间距的65%
-    );
-
-    // ========== 步骤6: 对汇聚节点应用加权居中与顺序修正 ==========
-    
-    // 1. 先进行投料顺序修正，确保 X 坐标物理顺序与 sequenceOrder 一致
-    // 系统性解决交叉：整分支平移，确保上游分支随直接父节点一起移动
-    reorderBranchesHorizontally(nodes, edges, nodePositions);
-
+    // ========== 步骤6: 汇聚点水平居中 ==========
+    // 对于有多个输入的汇聚节点，将其 X 坐标调整为输入节点的加权中心
     if (LAYOUT_CONFIG.enableWeightedCentering) {
-      // 2. 识别汇聚节点并应用加权居中
       const convergenceNodes = nodes.filter(node => {
         const incomingCount = nodeIncomingEdges[node.id]?.length || 0;
         if (incomingCount > 1) return true;
-        // 检查是否是调配节点（子步骤类型为COMPOUNDING）
         if (node.type === 'subStepNode' && node.data.subStep) {
           return node.data.subStep.processType === ProcessType.COMPOUNDING;
         }
         return false;
       });
-      
+
       convergenceNodes.forEach(node => {
         const newX = calculateConvergenceNodePosition(node, edges, nodes, nodePositions);
         nodePositions[node.id].x = newX;
-        
-        // 3. 系统性解决对齐：将中心位置向下游单线支路传播
+
+        // 将中心位置向下游单线支路传播
         propagateChainCentering(node.id, newX, nodePositions, edges, nodes);
       });
     }
+
 
     // 注意：targetHandle 的分配已在 useFlowEdges 中完成，按 sequenceOrder 排序
     // 这里不再需要重复分配
@@ -852,10 +990,10 @@ export function useAutoLayout() {
     nodes.forEach((node) => {
       const pos = nodePositions[node.id];
       if (!pos) return;
-      
+
       const width = calculatedNodeWidths[node.id] || LAYOUT_CONFIG.baseNodeWidth;
       const height = calculatedNodeHeights[node.id] || estimateNodeHeight(node, width);
-      
+
       // 保存位置（以节点左上角为基准，ReactFlow 使用左上角坐标）
       finalPositions[node.id] = {
         x: pos.x - width / 2,
@@ -865,5 +1003,5 @@ export function useAutoLayout() {
 
     // 保存位置到 Store，供 useFlowNodes 使用
     useRecipeStore.getState().setNodePositions(finalPositions);
-  }, [nodes, edges]);
+  }, [nodes, edges, processes]); // 添加 processes 作为依赖，确保顺序变化时重新布局
 }

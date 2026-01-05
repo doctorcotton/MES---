@@ -3,7 +3,7 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import { v4 as uuidv4 } from 'uuid';
-import { initDatabase, getRecipe, updateRecipe } from './db';
+import { initDatabase, getRecipe, updateRecipe, getFieldConfigs, getFieldConfig, createFieldConfig, updateFieldConfig, deleteFieldConfig } from './db';
 import { lockManager } from './lockManager';
 import { userManager } from './userManager';
 import { RecipeData, SocketUser } from './types';
@@ -96,6 +96,97 @@ app.put('/api/recipe', (req, res) => {
   }
 });
 
+
+// === Config API ===
+
+app.get('/api/config/fields/type/:processType', (req, res) => {
+  const configs = getFieldConfigs(req.params.processType);
+  res.json(configs);
+});
+
+app.get('/api/config/fields', (req, res) => {
+  const configs = getFieldConfigs();
+  res.json(configs);
+});
+
+app.post('/api/config/fields', (req, res) => {
+  const config = req.body;
+
+  // Basic validation
+  if (!config.processType || !config.key || !config.label || !config.inputType) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+
+  // Generate ID if missing
+  if (!config.id) {
+    config.id = uuidv4();
+  }
+
+  const now = new Date().toISOString();
+  config.createdAt = now;
+  config.updatedAt = now;
+  config.enabled = config.enabled !== false; // Default true
+  config.isSystem = false; // API created fields are not system default
+
+  try {
+    const success = createFieldConfig(config);
+    if (success) {
+      res.json({ success: true, config });
+    } else {
+      res.status(500).json({ error: 'Failed to create config' });
+    }
+  } catch (err: any) {
+    res.status(409).json({ error: err.message || 'Create failed (duplicate key?)' });
+  }
+});
+
+app.put('/api/config/fields/:id', (req, res) => {
+  const id = req.params.id;
+  const updates = req.body;
+
+  updates.updatedAt = new Date().toISOString();
+
+  try {
+    const success = updateFieldConfig(id, updates);
+    if (success) {
+      res.json({ success: true });
+    } else {
+      res.status(404).json({ error: 'Config not found or no changes' });
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/config/fields/:id', (req, res) => {
+  const id = req.params.id;
+  try {
+    const success = deleteFieldConfig(id);
+    if (success) {
+      res.json({ success: true });
+    } else {
+      // Check if it failed because it's a system field
+      const config = getFieldConfig(id);
+      if (config && config.isSystem) {
+        return res.status(403).json({ error: 'Cannot delete system field' });
+      }
+      res.status(404).json({ error: 'Config not found' });
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/config/sync', (req, res) => {
+  // This is mainly for manual trigger/testing, migration runs on startup
+  try {
+    const { syncDefaultFields } = require('./migrations/syncDefaultFields');
+    syncDefaultFields();
+    res.json({ success: true, message: 'Sync completed' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
 // WebSocket连接
 io.on('connection', (socket) => {
   const userId = generateUserId();
@@ -181,7 +272,7 @@ io.on('connection', (socket) => {
     const disconnectedUser = userManager.removeUser(socket.id);
     lockManager.handleDisconnect(socket.id);
     socket.broadcast.emit('user:disconnected', disconnectedUser);
-    
+
     // 如果锁的持有者断开，广播锁释放
     if (lockManager.getLockStatus().isLocked === false) {
       io.emit('lock:released', lockManager.getLockStatus());

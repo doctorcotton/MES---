@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Table,
   TableBody,
@@ -10,12 +10,40 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { useRecipeStore } from '@/store/useRecipeStore';
 import { useCollabStore } from '@/store/useCollabStore';
 import { ConnectionModal } from './ConnectionModal';
 import { ParamsModal } from './ParamsModal';
-import { Plus, Trash2, Lock, ChevronDown, ChevronRight, Edit2 } from 'lucide-react';
-import { SubStep, ProcessType, getEquipmentConfig, getMaterials } from '@/types/recipe';
+import { AddSubStepDialog } from './AddSubStepDialog';
+import { Plus, Trash2, Lock, ChevronDown, ChevronRight, Edit2, Copy, ArrowUp, ArrowDown } from 'lucide-react';
+import { SubStep, ProcessType, getEquipmentConfig, getMaterials, Process } from '@/types/recipe';
+import { DeviceType } from '@/types/equipment';
+import { DeviceRequirement } from '@/types/scheduling';
+import { useProcessTypeConfigStore } from '@/store/useProcessTypeConfigStore';
 
 // 工艺类型中文映射
 const getProcessTypeLabel = (type: ProcessType): string => {
@@ -30,6 +58,267 @@ const getProcessTypeLabel = (type: ProcessType): string => {
   return labels[type];
 };
 
+// 可拖动的工艺段行组件
+function SortableProcessRow({
+  process,
+  index,
+  isExpanded,
+  isEditingProcess,
+  editProcessValues,
+  setEditProcessValues,
+  toggleProcessExpanded,
+  handleStartEditProcess,
+  handleSaveEditProcess,
+  handleAddSubStep,
+  getProcessConnections,
+  canEdit,
+  setConnectionModalProcessId,
+  removeProcess,
+  insertProcess,
+  duplicateProcess,
+  setEditingProcessId,
+}: {
+  process: Process;
+  index: number;
+  isExpanded: boolean;
+  isEditingProcess: boolean;
+  editProcessValues: { name?: string; description?: string };
+  setEditProcessValues: (values: { name?: string; description?: string }) => void;
+  toggleProcessExpanded: (id: string) => void;
+  handleStartEditProcess: (id: string) => void;
+  handleSaveEditProcess: (id: string) => void;
+  handleAddSubStep: (id: string) => void;
+  getProcessConnections: (id: string) => any[];
+  canEdit: boolean;
+  setConnectionModalProcessId: (id: string | null) => void;
+  removeProcess: (id: string) => void;
+  insertProcess: (process: Process, targetIndex: number) => void;
+  duplicateProcess: (processId: string, insertAfter: boolean) => void;
+  setEditingProcessId: (id: string | null) => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: process.id, disabled: !canEdit });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  const handleInsertAbove = () => {
+    if (!canEdit) return;
+    const newProcessId = `P${Date.now()}`;
+    const newProcess: Process = {
+      id: newProcessId,
+      name: `新工艺段${newProcessId}`,
+      node: {
+        id: newProcessId,
+        type: 'processNode',
+        label: `新工艺段${newProcessId}`,
+        subSteps: [],
+      },
+    };
+    insertProcess(newProcess, index);
+  };
+
+  const handleInsertBelow = () => {
+    if (!canEdit) return;
+    const newProcessId = `P${Date.now()}`;
+    const newProcess: Process = {
+      id: newProcessId,
+      name: `新工艺段${newProcessId}`,
+      node: {
+        id: newProcessId,
+        type: 'processNode',
+        label: `新工艺段${newProcessId}`,
+        subSteps: [],
+      },
+    };
+    insertProcess(newProcess, index + 1);
+  };
+
+  const handleDuplicate = () => {
+    if (!canEdit) return;
+    duplicateProcess(process.id, true);
+  };
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <TableRow
+          ref={setNodeRef}
+          style={style}
+          className="bg-slate-100 hover:bg-slate-200"
+        >
+          <TableCell colSpan={10} className="py-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                {canEdit && (
+                  <div
+                    {...attributes}
+                    {...listeners}
+                    className="cursor-grab active:cursor-grabbing mr-1"
+                    title="拖动排序"
+                  >
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 12 12"
+                      fill="none"
+                      xmlns="http://www.w3.org/2000/svg"
+                    >
+                      <circle cx="2" cy="2" r="1" fill="currentColor" />
+                      <circle cx="6" cy="2" r="1" fill="currentColor" />
+                      <circle cx="10" cy="2" r="1" fill="currentColor" />
+                      <circle cx="2" cy="6" r="1" fill="currentColor" />
+                      <circle cx="6" cy="6" r="1" fill="currentColor" />
+                      <circle cx="10" cy="6" r="1" fill="currentColor" />
+                      <circle cx="2" cy="10" r="1" fill="currentColor" />
+                      <circle cx="6" cy="10" r="1" fill="currentColor" />
+                      <circle cx="10" cy="10" r="1" fill="currentColor" />
+                    </svg>
+                  </div>
+                )}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6"
+                  onClick={() => toggleProcessExpanded(process.id)}
+                >
+                  {isExpanded ? (
+                    <ChevronDown className="h-4 w-4" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4" />
+                  )}
+                </Button>
+                <span className="font-bold text-sm">
+                  P{index + 1} - {isEditingProcess ? (
+                    <Input
+                      value={editProcessValues.name || process.name}
+                      onChange={(e) => setEditProcessValues({ ...editProcessValues, name: e.target.value })}
+                      onBlur={() => handleSaveEditProcess(process.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleSaveEditProcess(process.id);
+                        if (e.key === 'Escape') {
+                          setEditingProcessId(null);
+                        }
+                      }}
+                      className="inline-block w-48 h-6 text-sm"
+                      autoFocus
+                    />
+                  ) : (
+                    <span
+                      className={canEdit ? 'cursor-pointer hover:text-blue-600' : ''}
+                      onClick={() => canEdit && handleStartEditProcess(process.id)}
+                    >
+                      {process.name}
+                    </span>
+                  )}
+                </span>
+                <span className="text-xs text-gray-500">
+                  ({process.node.subSteps.length}个步骤)
+                </span>
+                {/* 下一步显示 */}
+                {(() => {
+                  const processConnections = getProcessConnections(process.id);
+                  return processConnections.length > 0 ? (
+                    <div className="ml-4 flex items-center gap-1 text-xs text-gray-600">
+                      <span className="font-medium">下一步:</span>
+                      {processConnections.map((conn, idx) => (
+                        <span key={idx} className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded border border-blue-100">
+                          → {conn.target} (Seq:{conn.sequence})
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="ml-4 text-xs text-gray-400">无下一步</span>
+                  );
+                })()}
+              </div>
+              <div className="flex items-center gap-2">
+                {canEdit && (
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setConnectionModalProcessId(process.id)}
+                      title="设置下一步"
+                    >
+                      <Edit2 className="h-4 w-4 mr-1" />
+                      设置下一步
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleAddSubStep(process.id)}
+                      title="添加子步骤"
+                    >
+                      <Plus className="h-4 w-4 mr-1" />
+                      添加子步骤
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => {
+                        if (confirm(`确定要删除工艺段 ${process.id} 及其所有步骤吗？`)) {
+                          removeProcess(process.id);
+                        }
+                      }}
+                      title="删除工艺段"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </>
+                )}
+              </div>
+            </div>
+          </TableCell>
+        </TableRow>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        {canEdit && (
+          <>
+            <ContextMenuItem onClick={handleInsertAbove}>
+              <ArrowUp className="mr-2 h-4 w-4" />
+              向上插入工艺段
+            </ContextMenuItem>
+            <ContextMenuItem onClick={handleInsertBelow}>
+              <ArrowDown className="mr-2 h-4 w-4" />
+              向下插入工艺段
+            </ContextMenuItem>
+            <ContextMenuItem onClick={handleDuplicate}>
+              <Copy className="mr-2 h-4 w-4" />
+              复制工艺段
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+          </>
+        )}
+        <ContextMenuItem
+          onClick={() => {
+            if (!canEdit) {
+              alert('需要编辑权限或进入演示模式');
+              return;
+            }
+            if (confirm(`确定要删除工艺段 ${process.id} 及其所有步骤吗？`)) {
+              removeProcess(process.id);
+            }
+          }}
+          disabled={!canEdit}
+        >
+          <Trash2 className="mr-2 h-4 w-4" />
+          删除工艺段
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
 export function RecipeTable() {
   const {
     processes,
@@ -40,11 +329,22 @@ export function RecipeTable() {
     addProcess,
     updateProcess,
     removeProcess,
+    insertProcess,
+    duplicateProcess,
+    reorderProcesses,
     hoveredNodeId,
     setHoveredNodeId,
   } = useRecipeStore();
   const { isEditable, mode } = useCollabStore();
   const canEdit = mode === 'demo' || isEditable();
+
+  // 拖动传感器
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
 
   const [connectionModalProcessId, setConnectionModalProcessId] = useState<string | null>(null);
   const [paramsModalSubStepId, setParamsModalSubStepId] = useState<string | null>(null);
@@ -55,6 +355,10 @@ export function RecipeTable() {
   const [expandedProcesses, setExpandedProcesses] = useState<Set<string>>(
     new Set(processes.map(p => p.id))
   );
+  // 类型选择对话框状态
+  const [addSubStepDialogOpen, setAddSubStepDialogOpen] = useState(false);
+  const [addSubStepProcessId, setAddSubStepProcessId] = useState<string | null>(null);
+  const { getSubStepTemplate } = useProcessTypeConfigStore();
 
   // 同步expandedProcesses，确保processes更新时也更新展开状态
   useEffect(() => {
@@ -89,12 +393,27 @@ export function RecipeTable() {
     });
   };
 
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || !canEdit) return;
+
+    if (active.id !== over.id) {
+      const oldIndex = processes.findIndex(p => p.id === active.id);
+      const newIndex = processes.findIndex(p => p.id === over.id);
+
+      if (oldIndex !== -1 && newIndex !== -1) {
+        const newOrder = arrayMove(processes, oldIndex, newIndex);
+        reorderProcesses(newOrder.map(p => p.id));
+      }
+    }
+  }, [processes, canEdit, reorderProcesses]);
+
   const handleAddProcess = () => {
     if (!canEdit) {
       alert('需要编辑权限或进入演示模式');
       return;
     }
-    const newProcessId = `P${processes.length + 1}`;
+    const newProcessId = `P${Date.now()}`;
     addProcess({
       id: newProcessId,
       name: `新工艺段${newProcessId}`,
@@ -125,28 +444,41 @@ export function RecipeTable() {
     }
   };
 
-  const handleAddSubStep = (processId: string) => {
+  // 打开类型选择对话框
+  const handleOpenAddSubStepDialog = (processId: string) => {
     if (!canEdit) {
       alert('需要编辑权限或进入演示模式');
       return;
     }
-    const process = processes.find(p => p.id === processId);
+    setAddSubStepProcessId(processId);
+    setAddSubStepDialogOpen(true);
+  };
+
+  // 确认添加子步骤（从模板创建）
+  const handleConfirmAddSubStep = (processType: ProcessType) => {
+    if (!addSubStepProcessId) return;
+
+    const process = processes.find(p => p.id === addSubStepProcessId);
     const subStepCount = process?.node.subSteps.length || 0;
+    const template = getSubStepTemplate(processType);
+
     const newSubStep: SubStep = {
-      id: `${processId}-substep-${subStepCount + 1}`,
+      id: `${addSubStepProcessId}-substep-${subStepCount + 1}`,
       order: subStepCount + 1,
-      processType: ProcessType.OTHER,
-      label: '新步骤',
-      deviceCode: '',
+      processType: processType,
+      label: template.label,
+      deviceCode: template.defaultDeviceCode,
       ingredients: '',
-      params: {
-        processType: ProcessType.OTHER,
-        params: '',
+      params: template.defaultParams,
+      deviceRequirement: {
+        exclusiveUse: true,
+        deviceType: template.defaultDeviceType,
+        deviceCode: template.defaultDeviceCode || undefined,
       },
+      templateVersion: template.version,
     };
-    addSubStep(processId, newSubStep);
-    setEditingSubStepId(newSubStep.id);
-    setEditSubStepValues(newSubStep);
+    addSubStep(addSubStepProcessId, newSubStep);
+    setAddSubStepProcessId(null);
   };
 
   const handleStartEditSubStep = (subStep: SubStep) => {
@@ -156,7 +488,32 @@ export function RecipeTable() {
 
   const handleSaveEditSubStep = (processId: string, subStepId: string) => {
     if (editingSubStepId === subStepId) {
-      updateSubStep(processId, subStepId, editSubStepValues);
+      // 自动同步 deviceCode 到 deviceRequirement
+      const updatedValues = { ...editSubStepValues };
+
+      // 如果修改了设备编号，同步更新 deviceRequirement
+      if (updatedValues.deviceCode !== undefined) {
+        const currentProcess = processes.find(p => p.id === processId);
+        const currentSubStep = currentProcess?.node.subSteps.find(s => s.id === subStepId);
+
+        if (currentSubStep) {
+          const newDeviceCode = updatedValues.deviceCode;
+          const currentRequirement: DeviceRequirement = currentSubStep.deviceRequirement || {
+            exclusiveUse: true,
+            deviceType: DeviceType.OTHER
+          };
+
+          updatedValues.deviceRequirement = {
+            ...currentRequirement,
+            deviceCode: newDeviceCode,
+            // 如果只有deviceCode没有type，尝试保留原有type或默认为OTHER
+            deviceType: currentRequirement.deviceType || DeviceType.OTHER,
+            exclusiveUse: currentRequirement.exclusiveUse ?? true
+          };
+        }
+      }
+
+      updateSubStep(processId, subStepId, updatedValues);
       setEditingSubStepId(null);
       setEditSubStepValues({});
     }
@@ -180,8 +537,8 @@ export function RecipeTable() {
       });
   };
 
-  // 格式化子步骤参数显示
-  const formatSubStepParamsDisplay = (subStep: SubStep): string => {
+  // 渲染子步骤参数显示
+  const renderSubStepParams = (subStep: SubStep) => {
     switch (subStep.processType) {
       case ProcessType.DISSOLUTION:
         if ('dissolutionParams' in subStep.params) {
@@ -191,329 +548,299 @@ export function RecipeTable() {
             : '常温';
           const volume = `${p.waterVolume.condition || ''}${p.waterVolume.value}${p.waterVolume.unit}`;
           const rate = p.stirringRate === 'high' ? '高速' : p.stirringRate === 'medium' ? '中速' : '低速';
-          return `水量:${volume} 水温:${temp} 搅拌:${rate} ${p.stirringTime.value}${p.stirringTime.unit}`;
+          return (
+            <div className="flex flex-col gap-1 text-xs text-left">
+              <span className="font-medium text-slate-700">溶解参数:</span>
+              <span>水量: {volume}</span>
+              <span>水温: {temp}</span>
+              <span>搅拌: {rate} ({p.stirringTime.value}{p.stirringTime.unit})</span>
+            </div>
+          );
         }
         break;
       case ProcessType.COMPOUNDING:
         if ('compoundingParams' in subStep.params) {
           const p = subStep.params.compoundingParams;
           const speed = `${p.stirringSpeed.condition || ''}${p.stirringSpeed.value}${p.stirringSpeed.unit}`;
-          return `添加物:${p.additives.length}项 搅拌:${speed} ${p.stirringTime.value}${p.stirringTime.unit} 温度:<${p.finalTemp.max}${p.finalTemp.unit}`;
+          return (
+            <div className="flex flex-col gap-1 text-xs text-left">
+              <span className="font-medium text-slate-700">调配参数:</span>
+              <span>添加物: {p.additives.length}项</span>
+              <span>搅拌: {speed} ({p.stirringTime.value}{p.stirringTime.unit})</span>
+              <span>温度: &lt;{p.finalTemp.max}{p.finalTemp.unit}</span>
+            </div>
+          );
         }
         break;
       case ProcessType.FILTRATION:
         if ('filtrationParams' in subStep.params) {
-          return `${subStep.params.filtrationParams.precision.value}${subStep.params.filtrationParams.precision.unit}`;
+          return (
+            <div className="flex flex-col gap-1 text-xs text-left">
+              <span className="font-medium text-slate-700">过滤参数:</span>
+              <span>精度: {subStep.params.filtrationParams.precision.value}{subStep.params.filtrationParams.precision.unit}</span>
+            </div>
+          );
         }
         break;
       case ProcessType.TRANSFER:
         if ('transferParams' in subStep.params) {
           const p = subStep.params.transferParams;
           const type = p.transferType === 'material' ? '料赶料' : p.transferType === 'water' ? '水赶料' : '无';
-          return type + (p.waterVolume ? ` ${p.waterVolume.value}${p.waterVolume.unit}` : '');
+          return (
+            <div className="flex flex-col gap-1 text-xs text-left">
+              <span className="font-medium text-slate-700">赶料参数:</span>
+              <span>类型: {type}</span>
+              {p.waterVolume && <span>水量: {p.waterVolume.value}{p.waterVolume.unit}</span>}
+            </div>
+          );
         }
         break;
       case ProcessType.FLAVOR_ADDITION:
         if ('flavorAdditionParams' in subStep.params) {
-          return subStep.params.flavorAdditionParams.method;
+          return (
+            <div className="flex flex-col gap-1 text-xs text-left">
+              <span className="font-medium text-slate-700">香精添加:</span>
+              <span>方式: {subStep.params.flavorAdditionParams.method}</span>
+            </div>
+          );
         }
         break;
       case ProcessType.OTHER:
         if ('params' in subStep.params && subStep.params.params) {
-          return subStep.params.params;
+          return <span className="text-xs text-left break-words">{subStep.params.params}</span>;
         }
         break;
     }
-    return '-';
+    return <span className="text-gray-400">-</span>;
   };
 
   return (
     <div className="flex h-full flex-col">
       <div className="flex-1 overflow-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-[80px]">工艺段</TableHead>
-              <TableHead className="w-[120px]">步骤ID</TableHead>
-              <TableHead>步骤名称</TableHead>
-              <TableHead className="w-[100px]">工艺类型</TableHead>
-              <TableHead>位置/设备</TableHead>
-              <TableHead>原料/内容</TableHead>
-              <TableHead>关键参数</TableHead>
-              <TableHead>预计耗时</TableHead>
-              <TableHead>调度约束</TableHead>
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleDragEnd}
+        >
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-[80px]">工艺段</TableHead>
+                <TableHead className="w-[120px]">步骤ID</TableHead>
+                <TableHead>步骤名称</TableHead>
+                <TableHead className="w-[100px]">工艺类型</TableHead>
+                <TableHead>位置/设备</TableHead>
+                <TableHead>原料/内容</TableHead>
+                <TableHead>关键参数</TableHead>
+                <TableHead>预计耗时</TableHead>
+                <TableHead>调度约束</TableHead>
+                <TableHead className="w-[100px]">操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              <SortableContext
+                items={processes.map(p => p.id)}
+                strategy={verticalListSortingStrategy}
+              >
+                {processes.map((process, index) => {
+                  const isExpanded = expandedProcesses.has(process.id);
+                  const isEditingProcess = editingProcessId === process.id;
 
-              <TableHead>下一步</TableHead>
-              <TableHead className="w-[100px]">操作</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {processes.map((process) => {
-              const isExpanded = expandedProcesses.has(process.id);
-              const isEditingProcess = editingProcessId === process.id;
+                  return (
+                    <React.Fragment key={`process-group-${process.id}`}>
+                      {/* Process分组头 */}
+                      <SortableProcessRow
+                        process={process}
+                        index={index}
+                        isExpanded={isExpanded}
+                        isEditingProcess={isEditingProcess}
+                        editProcessValues={editProcessValues}
+                        setEditProcessValues={setEditProcessValues}
+                        toggleProcessExpanded={toggleProcessExpanded}
+                        handleStartEditProcess={handleStartEditProcess}
+                        handleSaveEditProcess={handleSaveEditProcess}
+                        handleAddSubStep={handleOpenAddSubStepDialog}
+                        getProcessConnections={getProcessConnections}
+                        canEdit={canEdit}
+                        setConnectionModalProcessId={setConnectionModalProcessId}
+                        removeProcess={removeProcess}
+                        insertProcess={insertProcess}
+                        duplicateProcess={duplicateProcess}
+                        setEditingProcessId={setEditingProcessId}
+                      />
 
-              return (
-                <React.Fragment key={`process-group-${process.id}`}>
-                  {/* Process分组头 */}
-                  <TableRow
-                    className="bg-slate-100 hover:bg-slate-200"
-                  >
-                    <TableCell colSpan={11} className="py-2">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6"
-                            onClick={() => toggleProcessExpanded(process.id)}
+                      {/* Process内的子步骤 */}
+                      {isExpanded && process.node.subSteps.map((subStep) => {
+                        const isEditing = editingSubStepId === subStep.id;
+                        const isHovered = hoveredNodeId === subStep.id;
+
+                        return (
+                          <TableRow
+                            key={subStep.id}
+                            id={`row-${subStep.id}`}
+                            className={isHovered ? 'bg-blue-50' : ''}
+                            onMouseEnter={() => setHoveredNodeId(subStep.id)}
+                            onMouseLeave={() => setHoveredNodeId(null)}
                           >
-                            {isExpanded ? (
-                              <ChevronDown className="h-4 w-4" />
-                            ) : (
-                              <ChevronRight className="h-4 w-4" />
-                            )}
-                          </Button>
-                          <span className="font-bold text-sm">
-                            {process.id} - {isEditingProcess ? (
-                              <Input
-                                value={editProcessValues.name || process.name}
-                                onChange={(e) => setEditProcessValues({ ...editProcessValues, name: e.target.value })}
-                                onBlur={() => handleSaveEditProcess(process.id)}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') handleSaveEditProcess(process.id);
-                                  if (e.key === 'Escape') {
-                                    setEditingProcessId(null);
-                                    setEditProcessValues({});
+                            <TableCell>
+                              <span className="text-xs text-gray-400">↑</span>
+                            </TableCell>
+                            <TableCell>
+                              <span className="font-mono text-sm">{subStep.order}</span>
+                            </TableCell>
+                            <TableCell>
+                              {isEditing ? (
+                                <Input
+                                  value={editSubStepValues.label ?? subStep.label}
+                                  onChange={(e) =>
+                                    setEditSubStepValues({ ...editSubStepValues, label: e.target.value })
                                   }
-                                }}
-                                className="inline-block w-48 h-6 text-sm"
-                                autoFocus
-                              />
-                            ) : (
-                              <span
-                                className={canEdit ? 'cursor-pointer hover:text-blue-600' : ''}
-                                onClick={() => canEdit && handleStartEditProcess(process.id)}
-                              >
-                                {process.name}
+                                  onBlur={() => handleSaveEditSubStep(process.id, subStep.id)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleSaveEditSubStep(process.id, subStep.id);
+                                    if (e.key === 'Escape') handleCancelEdit();
+                                  }}
+                                  autoFocus
+                                  disabled={!canEdit}
+                                />
+                              ) : (
+                                <span
+                                  className={`${canEdit ? 'cursor-pointer hover:text-blue-600' : 'cursor-not-allowed opacity-60'}`}
+                                  onClick={() => canEdit && handleStartEditSubStep(subStep)}
+                                >
+                                  {subStep.label}
+                                  {!canEdit && <Lock className="ml-1 inline h-3 w-3" />}
+                                </span>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <span className="text-xs text-gray-600">
+                                {getProcessTypeLabel(subStep.processType)}
                               </span>
-                            )}
-                          </span>
-                          <span className="text-xs text-gray-500">
-                            ({process.node.subSteps.length}个步骤)
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {canEdit && (
-                            <>
+                            </TableCell>
+                            <TableCell>
+                              {isEditing ? (
+                                <Input
+                                  value={editSubStepValues.deviceCode ?? subStep.deviceCode}
+                                  onChange={(e) =>
+                                    setEditSubStepValues({
+                                      ...editSubStepValues,
+                                      deviceCode: e.target.value,
+                                    })
+                                  }
+                                  onBlur={() => handleSaveEditSubStep(process.id, subStep.id)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleSaveEditSubStep(process.id, subStep.id);
+                                    if (e.key === 'Escape') handleCancelEdit();
+                                  }}
+                                  disabled={!canEdit}
+                                />
+                              ) : (
+                                <span
+                                  className={`${canEdit ? 'cursor-pointer hover:text-blue-600' : 'cursor-not-allowed opacity-60'}`}
+                                  onClick={() => canEdit && handleStartEditSubStep(subStep)}
+                                >
+                                  {getEquipmentConfig(subStep)?.deviceCode || subStep.deviceCode}
+                                </span>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {isEditing ? (
+                                <Textarea
+                                  value={editSubStepValues.ingredients ?? subStep.ingredients}
+                                  onChange={(e) =>
+                                    setEditSubStepValues({
+                                      ...editSubStepValues,
+                                      ingredients: e.target.value,
+                                    })
+                                  }
+                                  onBlur={() => handleSaveEditSubStep(process.id, subStep.id)}
+                                  rows={2}
+                                  className="min-w-[150px]"
+                                  disabled={!canEdit}
+                                />
+                              ) : (
+                                <span
+                                  className={`text-xs ${canEdit ? 'cursor-pointer hover:text-blue-600' : 'cursor-not-allowed opacity-60'}`}
+                                  onClick={() => canEdit && handleStartEditSubStep(subStep)}
+                                >
+                                  {getMaterials(subStep).length > 0
+                                    ? getMaterials(subStep).map(m => m.name).join('、')
+                                    : subStep.ingredients}
+                                </span>
+                              )}
+                            </TableCell>
+                            <TableCell>
                               <Button
-                                variant="ghost"
+                                variant="outline"
                                 size="sm"
-                                onClick={() => handleAddSubStep(process.id)}
-                                title="添加子步骤"
+                                onClick={() => {
+                                  if (!canEdit) {
+                                    alert('需要编辑权限或进入演示模式');
+                                    return;
+                                  }
+                                  setParamsModalSubStepId(subStep.id);
+                                }}
+                                className="w-full h-auto py-2 px-3 whitespace-normal min-h-[2rem]"
+                                disabled={!canEdit}
+                                title={!canEdit ? '需要编辑权限' : '点击编辑参数'}
                               >
-                                <Plus className="h-4 w-4 mr-1" />
-                                添加子步骤
+                                <div className="flex items-start w-full">
+                                  <Edit2 className="mr-2 h-3 w-3 mt-1 shrink-0 opacity-50" />
+                                  <div className="flex-1">
+                                    {renderSubStepParams(subStep)}
+                                  </div>
+                                </div>
                               </Button>
+                            </TableCell>
+                            <TableCell>
+                              <span className="text-xs text-gray-600">
+                                {subStep.estimatedDuration
+                                  ? `${subStep.estimatedDuration.value}${subStep.estimatedDuration.unit}`
+                                  : '-'}
+                              </span>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex flex-col space-y-1">
+                                {subStep.deviceRequirement && (
+                                  <span className="text-xs bg-purple-50 text-purple-700 px-1 py-0.5 rounded border border-purple-100 truncate max-w-[100px]" title="设备需求">
+                                    {subStep.deviceRequirement.deviceCode || subStep.deviceRequirement.deviceType || '设备需求'}
+                                  </span>
+                                )}
+                                {subStep.canParallelWith && subStep.canParallelWith.length > 0 && (
+                                  <span className="text-xs bg-green-50 text-green-700 px-1 py-0.5 rounded border border-green-100" title="可并行">
+                                    并行:{subStep.canParallelWith.length}
+                                  </span>
+                                )}
+                              </div>
+                            </TableCell>
+                            <TableCell>
                               <Button
                                 variant="ghost"
                                 size="icon"
                                 onClick={() => {
-                                  if (confirm(`确定要删除工艺段 ${process.id} 及其所有步骤吗？`)) {
-                                    removeProcess(process.id);
+                                  if (!canEdit) {
+                                    alert('需要编辑权限或进入演示模式');
+                                    return;
                                   }
+                                  removeSubStep(process.id, subStep.id);
                                 }}
-                                title="删除工艺段"
+                                disabled={!canEdit}
+                                title={!canEdit ? '需要编辑权限或进入演示模式' : '删除'}
                               >
                                 <Trash2 className="h-4 w-4" />
                               </Button>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-
-                  {/* Process内的子步骤 */}
-                  {isExpanded && process.node.subSteps.map((subStep) => {
-                    const isEditing = editingSubStepId === subStep.id;
-                    const isHovered = hoveredNodeId === subStep.id;
-                    const processConnections = getProcessConnections(process.id);
-
-                    return (
-                      <TableRow
-                        key={subStep.id}
-                        id={`row-${subStep.id}`}
-                        className={isHovered ? 'bg-blue-50' : ''}
-                        onMouseEnter={() => setHoveredNodeId(subStep.id)}
-                        onMouseLeave={() => setHoveredNodeId(null)}
-                      >
-                        <TableCell>
-                          <span className="text-xs text-gray-400">↑</span>
-                        </TableCell>
-                        <TableCell>
-                          <span className="font-mono text-sm">{subStep.order}</span>
-                        </TableCell>
-                        <TableCell>
-                          {isEditing ? (
-                            <Input
-                              value={editSubStepValues.label ?? subStep.label}
-                              onChange={(e) =>
-                                setEditSubStepValues({ ...editSubStepValues, label: e.target.value })
-                              }
-                              onBlur={() => handleSaveEditSubStep(process.id, subStep.id)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleSaveEditSubStep(process.id, subStep.id);
-                                if (e.key === 'Escape') handleCancelEdit();
-                              }}
-                              autoFocus
-                              disabled={!canEdit}
-                            />
-                          ) : (
-                            <span
-                              className={`${canEdit ? 'cursor-pointer hover:text-blue-600' : 'cursor-not-allowed opacity-60'}`}
-                              onClick={() => canEdit && handleStartEditSubStep(subStep)}
-                            >
-                              {subStep.label}
-                              {!canEdit && <Lock className="ml-1 inline h-3 w-3" />}
-                            </span>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <span className="text-xs text-gray-600">
-                            {getProcessTypeLabel(subStep.processType)}
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          {isEditing ? (
-                            <Input
-                              value={editSubStepValues.deviceCode ?? subStep.deviceCode}
-                              onChange={(e) =>
-                                setEditSubStepValues({
-                                  ...editSubStepValues,
-                                  deviceCode: e.target.value,
-                                })
-                              }
-                              onBlur={() => handleSaveEditSubStep(process.id, subStep.id)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleSaveEditSubStep(process.id, subStep.id);
-                                if (e.key === 'Escape') handleCancelEdit();
-                              }}
-                              disabled={!canEdit}
-                            />
-                          ) : (
-                            <span
-                              className={`${canEdit ? 'cursor-pointer hover:text-blue-600' : 'cursor-not-allowed opacity-60'}`}
-                              onClick={() => canEdit && handleStartEditSubStep(subStep)}
-                            >
-                              {getEquipmentConfig(subStep)?.deviceCode || subStep.deviceCode}
-                            </span>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          {isEditing ? (
-                            <Textarea
-                              value={editSubStepValues.ingredients ?? subStep.ingredients}
-                              onChange={(e) =>
-                                setEditSubStepValues({
-                                  ...editSubStepValues,
-                                  ingredients: e.target.value,
-                                })
-                              }
-                              onBlur={() => handleSaveEditSubStep(process.id, subStep.id)}
-                              rows={2}
-                              className="min-w-[150px]"
-                              disabled={!canEdit}
-                            />
-                          ) : (
-                            <span
-                              className={`text-xs ${canEdit ? 'cursor-pointer hover:text-blue-600' : 'cursor-not-allowed opacity-60'}`}
-                              onClick={() => canEdit && handleStartEditSubStep(subStep)}
-                            >
-                              {getMaterials(subStep).length > 0
-                                ? getMaterials(subStep).map(m => m.name).join('、')
-                                : subStep.ingredients}
-                            </span>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              if (!canEdit) {
-                                alert('需要编辑权限或进入演示模式');
-                                return;
-                              }
-                              setParamsModalSubStepId(subStep.id);
-                            }}
-                            className="w-full text-xs"
-                            disabled={!canEdit}
-                            title={!canEdit ? '需要编辑权限' : '点击编辑参数'}
-                          >
-                            <Edit2 className="mr-1 h-3 w-3" />
-                            {formatSubStepParamsDisplay(subStep).substring(0, 20)}
-                            {formatSubStepParamsDisplay(subStep).length > 20 ? '...' : ''}
-                          </Button>
-                        </TableCell>
-                        <TableCell>
-                          <span className="text-xs text-gray-600">
-                            {subStep.estimatedDuration
-                              ? `${subStep.estimatedDuration.value}${subStep.estimatedDuration.unit}`
-                              : '-'}
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex flex-col space-y-1">
-                            {subStep.deviceRequirement && (
-                              <span className="text-xs bg-purple-50 text-purple-700 px-1 py-0.5 rounded border border-purple-100 truncate max-w-[100px]" title="设备需求">
-                                {subStep.deviceRequirement.deviceCode || subStep.deviceRequirement.deviceType || '设备需求'}
-                              </span>
-                            )}
-                            {subStep.canParallelWith && subStep.canParallelWith.length > 0 && (
-                              <span className="text-xs bg-green-50 text-green-700 px-1 py-0.5 rounded border border-green-100" title="可并行">
-                                并行:{subStep.canParallelWith.length}
-                              </span>
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          {processConnections.length > 0 ? (
-                            <div className="space-y-0.5 text-xs text-gray-500">
-                              {processConnections.map((conn, idx) => (
-                                <div key={idx}>
-                                  → {conn.target} (Seq:{conn.sequence})
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <span className="text-xs text-gray-400">-</span>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => {
-                              if (!canEdit) {
-                                alert('需要编辑权限或进入演示模式');
-                                return;
-                              }
-                              removeSubStep(process.id, subStep.id);
-                            }}
-                            disabled={!canEdit}
-                            title={!canEdit ? '需要编辑权限或进入演示模式' : '删除'}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </React.Fragment>
-              );
-            })}
-          </TableBody>
-        </Table>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </React.Fragment>
+                  );
+                })}
+              </SortableContext>
+            </TableBody>
+          </Table>
+        </DndContext>
       </div>
 
       <div className="border-t p-4">
@@ -543,6 +870,12 @@ export function RecipeTable() {
           onOpenChange={(open) => !open && setParamsModalSubStepId(null)}
         />
       )}
+
+      <AddSubStepDialog
+        open={addSubStepDialogOpen}
+        onOpenChange={setAddSubStepDialogOpen}
+        onConfirm={handleConfirmAddSubStep}
+      />
     </div>
   );
 }

@@ -176,7 +176,8 @@ export const CustomNode = memo(({ id, data, selected, type }: NodeProps<CustomNo
 
   // 汇总节点渲染
   if (isSummaryNode && data.processId) {
-    const process = useRecipeStore.getState().processes.find(p => p.id === data.processId);
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    const process = useRecipeStore((state) => state.processes.find(p => p.id === data.processId));
     const firstSubStep = process?.node.subSteps[0];
     const headerColor = firstSubStep ? getNodeHeaderColor(firstSubStep.processType) : 'bg-gray-500';
 
@@ -197,7 +198,7 @@ export const CustomNode = memo(({ id, data, selected, type }: NodeProps<CustomNo
         <div className={cn('rounded-t-lg px-3 py-2', headerColor)}>
           <div className="font-bold text-white flex items-center justify-between">
             <div>
-              <span className="text-sm">{data.processId}</span>
+              <span className="text-sm">P{data.displayOrder ?? '?'}</span>
               <span className="ml-2">{data.processName}</span>
             </div>
             <ChevronRight className="h-4 w-4" />
@@ -257,7 +258,7 @@ export const CustomNode = memo(({ id, data, selected, type }: NodeProps<CustomNo
         {/* Header */}
         <div className={cn('rounded-t-lg px-3 py-2', headerColor)}>
           <div className="font-bold text-white">
-            <span className="text-sm">{subStep.order}.</span>
+            <span className="text-sm">P{data.displayOrder}-{subStep.order}.</span>
             <span className="ml-2">{subStep.label}</span>
           </div>
         </div>

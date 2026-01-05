@@ -24,6 +24,9 @@ export interface DeviceResource {
     capacity?: QuantityValue;                // 容量
     specifications?: EquipmentSpec[];        // 设备规格
 
+    // 新增：使用模式（工厂配置层使用）
+    usageMode?: DeviceUsageMode;             // 使用模式：默认/备用/禁用
+
     // 状态信息（运行时）
     currentState?: DeviceState;              // 当前状态
     currentStepId?: string;                  // 当前执行的步骤ID
@@ -88,4 +91,73 @@ export interface ScheduleWarning {
     message: string;
     relatedStepIds?: string[];
     relatedDeviceCodes?: string[];
+}
+
+/**
+ * 配置层级枚举
+ */
+export enum ConfigurationLevel {
+    RECIPE = 'RECIPE',                       // 配方层（研发视图）
+    FACTORY = 'FACTORY',                     // 工厂层（生产视图）
+    PRODUCTION_LINE = 'PRODUCTION_LINE'      // 产线层（具体产线）
+}
+
+/**
+ * 设备使用模式
+ */
+export enum DeviceUsageMode {
+    PRIMARY = 'PRIMARY',     // 默认使用
+    BACKUP = 'BACKUP',       // 备用（特殊情况才启用）
+    DISABLED = 'DISABLED'    // 禁用
+}
+
+/**
+ * 工厂产线配置
+ */
+export interface ProductionLineConfig {
+    id: string;                              // 产线ID（如 "tianjin-line1"）
+    factoryName: string;                     // 工厂名称（如 "天津厂"）
+    lineName: string;                        // 产线名称（如 "一线"）
+
+    // 设备配置
+    devicePool: DeviceResource[];            // 该产线的实际设备列表
+
+    // 设备能力约束
+    missingDeviceTypes?: DeviceType[];       // 缺少的设备类型（如没有离心机）
+
+    // 设备映射规则（配方设备 -> 实际设备）
+    deviceMapping?: Record<string, string>;  // 配方设备编号 -> 实际设备编号
+
+    // 元数据
+    description?: string;                    // 产线描述
+    enabled: boolean;                        // 是否启用
+    createdAt?: Date;                        // 创建时间
+    updatedAt?: Date;                        // 更新时间
+}
+
+/**
+ * 设备配置上下文（用于调度）
+ */
+export interface DeviceConfigContext {
+    level: ConfigurationLevel;               // 配置层级
+
+    // 配方层配置（研发视图 - 通用/理想配置）
+    recipeDevicePool?: DeviceResource[];     // 配方设计时的默认设备配置
+
+    // 工厂层配置（生产视图 - 实际物理配置）
+    productionLineConfig?: ProductionLineConfig;  // 具体产线的设备配置
+
+    // 使用哪个配置
+    activeDevicePool: DeviceResource[];      // 当前激活的设备池
+}
+
+/**
+ * 工厂配置（包含多个产线）
+ */
+export interface FactoryConfig {
+    id: string;                              // 工厂ID
+    name: string;                            // 工厂名称
+    location?: string;                       // 工厂位置
+    productionLines: ProductionLineConfig[]; // 产线列表
+    enabled: boolean;                        // 是否启用
 }

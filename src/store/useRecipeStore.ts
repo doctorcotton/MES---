@@ -30,6 +30,9 @@ interface RecipeStore {
   addProcess: (process: Process) => void;
   updateProcess: (id: string, data: Partial<Omit<Process, 'id' | 'node'>>) => void;
   removeProcess: (id: string) => void;
+  insertProcess: (process: Process, targetIndex: number) => void;
+  duplicateProcess: (processId: string, insertAfter: boolean) => void;
+  reorderProcesses: (newOrder: string[]) => void;
 
   // 展开/折叠操作
   toggleProcessExpanded: (processId: string) => void;
@@ -59,6 +62,7 @@ interface RecipeStore {
   // Collaboration
   syncFromServer: (schema: RecipeSchema, version: number) => void;
   setSaving: (saving: boolean) => void;
+  saveToServer: (userId?: string) => Promise<boolean>;
 
   // Layout
   setNodePositions: (positions: Record<string, { x: number; y: number }>) => void;
@@ -118,6 +122,107 @@ export const useRecipeStore = create<RecipeStore>((set, get) => ({
         updatedAt: new Date().toISOString(),
       },
     }));
+  },
+
+  insertProcess: (process, targetIndex) => {
+    set((state) => {
+      const newProcesses = [...state.processes];
+      newProcesses.splice(targetIndex, 0, process);
+      return {
+        processes: newProcesses,
+        expandedProcesses: new Set([...state.expandedProcesses, process.id]),
+        metadata: {
+          ...state.metadata,
+          updatedAt: new Date().toISOString(),
+        },
+      };
+    });
+  },
+
+  duplicateProcess: (processId, insertAfter) => {
+    const state = get();
+    const sourceProcess = state.processes.find(p => p.id === processId);
+    if (!sourceProcess) return;
+
+    // 生成新的工艺段ID
+    const generateNewId = (baseId: string): string => {
+      const timestamp = Date.now();
+      let newId = `${baseId}-copy-${timestamp}`;
+      let counter = 1;
+      while (state.processes.some(p => p.id === newId)) {
+        newId = `${baseId}-copy-${timestamp}-${counter}`;
+        counter++;
+      }
+      return newId;
+    };
+
+    const newProcessId = generateNewId(processId);
+
+    // 递归复制子步骤，更新ID
+    const duplicateSubSteps = sourceProcess.node.subSteps.map((subStep, index) => ({
+      ...subStep,
+      id: `${newProcessId}-substep-${index + 1}`,
+      order: index + 1,
+    }));
+
+    // 创建新的工艺段
+    const newProcess: Process = {
+      id: newProcessId,
+      name: `${sourceProcess.name} (副本)`,
+      description: sourceProcess.description,
+      node: {
+        id: newProcessId,
+        type: 'processNode',
+        label: `${sourceProcess.node.label} (副本)`,
+        subSteps: duplicateSubSteps,
+      },
+    };
+
+    // 找到源工艺段的位置
+    const sourceIndex = state.processes.findIndex(p => p.id === processId);
+    if (sourceIndex === -1) return;
+
+    // 确定插入位置
+    const targetIndex = insertAfter ? sourceIndex + 1 : sourceIndex;
+
+    // 插入新工艺段
+    set((state) => {
+      const newProcesses = [...state.processes];
+      newProcesses.splice(targetIndex, 0, newProcess);
+      return {
+        processes: newProcesses,
+        expandedProcesses: new Set([...state.expandedProcesses, newProcess.id]),
+        metadata: {
+          ...state.metadata,
+          updatedAt: new Date().toISOString(),
+        },
+      };
+    });
+  },
+
+  reorderProcesses: (newOrder) => {
+    set((state) => {
+      const processMap = new Map(state.processes.map(p => [p.id, p]));
+      const reorderedProcesses = newOrder
+        .map(id => processMap.get(id))
+        .filter((p): p is Process => p !== undefined);
+
+      // 如果有些ID不在newOrder中，保留在末尾
+      const remainingIds = state.processes
+        .map(p => p.id)
+        .filter(id => !newOrder.includes(id));
+      const remainingProcesses = remainingIds
+        .map(id => processMap.get(id))
+        .filter((p): p is Process => p !== undefined);
+
+      return {
+        processes: [...reorderedProcesses, ...remainingProcesses],
+        metadata: {
+          ...state.metadata,
+          updatedAt: new Date().toISOString(),
+        },
+      };
+    });
   },
 
   // 展开/折叠操作
@@ -367,6 +472,52 @@ export const useRecipeStore = create<RecipeStore>((set, get) => ({
   setNodePositions: (positions) => {
     set({ nodePositions: positions });
   },
+
+  saveToServer: async (userId?: string) => {
+    const state = get();
+    state.setSaving(true);
+    try {
+      const recipeData = {
+        metadata: state.metadata,
+        processes: state.processes.map(process => ({
+          ...process,
+          node: {
+            ...process.node,
+            position: undefined, // 排除position
+          },
+        })),
+        edges: state.edges,
+        version: state.version,
+      };
+
+      const response = await fetch('http://localhost:3001/api/recipe', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: userId || null,
+          recipeData,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        console.error('保存失败:', error);
+        return false;
+      }
+
+      const data = await response.json();
+      if (data.version) {
+        set({ version: data.version });
+      }
+
+      return true;
+    } catch (error) {
+      console.error('保存错误:', error);
+      return false;
+    } finally {
+      state.setSaving(false);
+    }
+  },
 }));
 
 /**
@@ -376,94 +527,90 @@ export const useFlowNodes = (): FlowNode[] => {
   const processes = useRecipeStore((state) => state.processes);
   const expandedProcesses = useRecipeStore((state) => state.expandedProcesses);
   const nodePositions = useRecipeStore((state) => state.nodePositions);
-
-  const nodes: FlowNode[] = [];
-
-  // 先收集所有节点（临时数组，用于查找输入来源）
-  const tempNodes: FlowNode[] = [];
-
-  processes.forEach(process => {
-    const isExpanded = expandedProcesses.has(process.id);
-
-    if (isExpanded) {
-      // 展开模式：每个子步骤一个节点
-      process.node.subSteps.forEach((subStep) => {
-        tempNodes.push({
-          id: subStep.id,
-          type: 'subStepNode',
-          position: nodePositions[subStep.id] || { x: 0, y: 0 },
-          data: {
-            subStep,
-          },
-        });
-      });
-    } else {
-      // 折叠模式：一个汇总节点
-      tempNodes.push({
-        id: process.id,
-        type: 'processSummaryNode',
-        position: nodePositions[process.id] || { x: 0, y: 0 },
-        data: {
-          processId: process.id,
-          processName: process.name,
-          subStepCount: process.node.subSteps.length,
-          isExpanded: false,
-        },
-      });
-    }
-  });
-
-  // 生成流程边（用于查找输入来源）
   const flowEdges = useFlowEdges();
 
-  // 为每个节点添加输入来源信息（特别是调配节点）
-  tempNodes.forEach(node => {
-    // 查找所有指向当前节点的边
-    const incomingEdges = flowEdges.filter(e => e.target === node.id);
+  return useMemo(() => {
+    const nodes: FlowNode[] = [];
+    const tempNodes: FlowNode[] = [];
 
-    // 如果是调配节点，收集输入来源信息
-    if (node.type === 'subStepNode' &&
-      node.data.subStep?.processType === ProcessType.COMPOUNDING &&
-      incomingEdges.length > 0) {
-      const inputSources = incomingEdges
-        .map(edge => {
-          // 找到源节点
-          const sourceNode = tempNodes.find(n => n.id === edge.source);
-          if (!sourceNode) return null;
+    processes.forEach((process, index) => {
+      const isExpanded = expandedProcesses.has(process.id);
+      const displayOrder = index + 1;
 
-          // 获取来源名称
-          let sourceName = '';
-          if (sourceNode.type === 'subStepNode' && sourceNode.data.subStep) {
-            sourceName = sourceNode.data.subStep.label;
-          } else if (sourceNode.type === 'processSummaryNode') {
-            sourceName = sourceNode.data.processName || sourceNode.data.processId || '';
-          }
-
-          // 获取来源工艺段信息
-          const sourceProcess = processes.find(p => {
-            if (p.id === edge.source) return true;
-            return p.node.subSteps.some(s => s.id === edge.source);
+      if (isExpanded) {
+        process.node.subSteps.forEach((subStep) => {
+          tempNodes.push({
+            id: subStep.id,
+            type: 'subStepNode',
+            position: { ...(nodePositions[subStep.id] || { x: 0, y: 0 }) },
+            data: {
+              subStep,
+              processId: process.id,
+              displayOrder,
+            },
           });
+        });
+      } else {
+        tempNodes.push({
+          id: process.id,
+          type: 'processSummaryNode',
+          position: { ...(nodePositions[process.id] || { x: 0, y: 0 }) },
+          data: {
+            processId: process.id,
+            processName: process.name,
+            subStepCount: process.node.subSteps.length,
+            isExpanded: false,
+            displayOrder,
+          },
+        });
+      }
+    });
 
-          return {
-            nodeId: edge.source,
-            name: sourceName,
-            processId: sourceProcess?.id || '',
-            processName: sourceProcess?.name || '',
-            sequenceOrder: edge.data?.sequenceOrder || 0,
-          };
-        })
-        .filter((source): source is NonNullable<typeof source> => source !== null)
-        .sort((a, b) => a.sequenceOrder - b.sequenceOrder); // 按顺序排序
+    tempNodes.forEach(node => {
+      const incomingEdges = flowEdges.filter(e => e.target === node.id);
 
-      // 添加到节点数据中
-      node.data.inputSources = inputSources;
-    }
+      if (node.type === 'subStepNode' &&
+        node.data.subStep?.processType === ProcessType.COMPOUNDING &&
+        incomingEdges.length > 0) {
+        const inputSources = incomingEdges
+          .map(edge => {
+            const sourceNode = tempNodes.find(n => n.id === edge.source);
+            if (!sourceNode) return null;
 
-    nodes.push(node);
-  });
+            let sourceName = '';
+            if (sourceNode.type === 'subStepNode' && sourceNode.data.subStep) {
+              sourceName = sourceNode.data.subStep.label;
+            } else if (sourceNode.type === 'processSummaryNode') {
+              sourceName = sourceNode.data.processName || sourceNode.data.processId || '';
+            }
 
-  return nodes;
+            const sourceProcess = processes.find(p => {
+              if (p.id === edge.source) return true;
+              return p.node.subSteps.some(s => s.id === edge.source);
+            });
+
+            return {
+              nodeId: edge.source,
+              name: sourceName,
+              processId: sourceProcess?.id || '',
+              processName: sourceProcess?.name || '',
+              sequenceOrder: edge.data?.sequenceOrder || 0,
+            };
+          })
+          .filter((source): source is NonNullable<typeof source> => source !== null)
+          .sort((a, b) => a.sequenceOrder - b.sequenceOrder);
+
+        node.data = {
+          ...node.data,
+          inputSources,
+        };
+      }
+
+      nodes.push(node);
+    });
+
+    return nodes;
+  }, [processes, expandedProcesses, nodePositions, flowEdges]);
 };
 
 /**
@@ -474,102 +621,82 @@ export const useFlowEdges = (): RecipeEdge[] => {
   const edges = useRecipeStore((state) => state.edges);
   const expandedProcesses = useRecipeStore((state) => state.expandedProcesses);
 
-  const flowEdges: RecipeEdge[] = [];
+  return useMemo(() => {
+    const flowEdges: RecipeEdge[] = [];
 
-  // 处理工艺段间连线
-  edges.forEach(edge => {
-    const sourceProcess = processes.find(p => p.id === edge.source);
-    const targetProcess = processes.find(p => p.id === edge.target);
+    edges.forEach(edge => {
+      const sourceProcess = processes.find(p => p.id === edge.source);
+      const targetProcess = processes.find(p => p.id === edge.target);
 
-    if (!sourceProcess || !targetProcess) return;
+      if (!sourceProcess || !targetProcess) return;
 
-    const sourceExpanded = expandedProcesses.has(sourceProcess.id);
-    const targetExpanded = expandedProcesses.has(targetProcess.id);
+      const sourceExpanded = expandedProcesses.has(sourceProcess.id);
+      const targetExpanded = expandedProcesses.has(targetProcess.id);
 
-    // 确定源节点和目标节点
-    let sourceNodeId: string;
-    let targetNodeId: string;
+      let sourceNodeId: string;
+      let targetNodeId: string;
 
-    if (sourceExpanded) {
-      // 源工艺段展开：连接到最后一个子步骤
-      const lastSubStep = sourceProcess.node.subSteps[sourceProcess.node.subSteps.length - 1];
-      sourceNodeId = lastSubStep.id;
-    } else {
-      // 源工艺段折叠：连接到汇总节点
-      sourceNodeId = sourceProcess.id;
-    }
-
-    if (targetExpanded) {
-      // 目标工艺段展开：从第一个子步骤连接
-      const firstSubStep = targetProcess.node.subSteps[0];
-      targetNodeId = firstSubStep.id;
-    } else {
-      // 目标工艺段折叠：连接到汇总节点
-      targetNodeId = targetProcess.id;
-    }
-
-    flowEdges.push({
-      ...edge,
-      source: sourceNodeId,
-      target: targetNodeId,
-    });
-  });
-
-  // 生成工艺段内部连线（仅当展开时）
-  processes.forEach(process => {
-    if (expandedProcesses.has(process.id) && process.node.subSteps.length > 1) {
-      // 为子步骤生成内部连线
-      for (let idx = 0; idx < process.node.subSteps.length - 1; idx++) {
-        const current = process.node.subSteps[idx];
-        const next = process.node.subSteps[idx + 1];
-        flowEdges.push({
-          id: `internal-${current.id}-${next.id}`,
-          source: current.id,
-          target: next.id,
-          type: 'sequenceEdge',
-          data: { sequenceOrder: 1 },
-        });
+      if (sourceExpanded) {
+        const lastSubStep = sourceProcess.node.subSteps[sourceProcess.node.subSteps.length - 1];
+        sourceNodeId = lastSubStep.id;
+      } else {
+        sourceNodeId = sourceProcess.id;
       }
-    }
-  });
 
-  // ========== 新增：为多输入节点分配targetHandle ==========
+      if (targetExpanded) {
+        const firstSubStep = targetProcess.node.subSteps[0];
+        targetNodeId = firstSubStep.id;
+      } else {
+        targetNodeId = targetProcess.id;
+      }
 
-  // 1. 统计每个节点的输入边
-  const nodeIncomingEdges = new Map<string, RecipeEdge[]>();
-  flowEdges.forEach(edge => {
-    const edges = nodeIncomingEdges.get(edge.target) || [];
-    edges.push(edge);
-    nodeIncomingEdges.set(edge.target, edges);
-  });
-
-  // 2. 为多输入节点的边分配targetHandle
-  const finalEdges = flowEdges.map(edge => {
-    const incomingEdges = nodeIncomingEdges.get(edge.target) || [];
-
-    // 如果只有1个输入，不需要指定targetHandle（使用默认handle）
-    if (incomingEdges.length <= 1) {
-      return edge;
-    }
-
-    // 多输入节点：按sequenceOrder排序，分配targetHandle
-    const sortedEdges = [...incomingEdges].sort((a, b) => {
-      const orderA = a.data?.sequenceOrder || 0;
-      const orderB = b.data?.sequenceOrder || 0;
-      return orderA - orderB;
+      flowEdges.push({
+        ...edge,
+        source: sourceNodeId,
+        target: targetNodeId,
+      });
     });
 
-    // 找到当前边在排序后的索引
-    const handleIndex = sortedEdges.findIndex(e => e.id === edge.id);
+    processes.forEach(process => {
+      if (expandedProcesses.has(process.id) && process.node.subSteps.length > 1) {
+        for (let idx = 0; idx < process.node.subSteps.length - 1; idx++) {
+          const current = process.node.subSteps[idx];
+          const next = process.node.subSteps[idx + 1];
+          flowEdges.push({
+            id: `internal-${current.id}-${next.id}`,
+            source: current.id,
+            target: next.id,
+            type: 'sequenceEdge',
+            data: { sequenceOrder: 1 },
+          });
+        }
+      }
+    });
 
-    // 分配targetHandle（必须匹配CustomNode中的handle ID）
-    return {
-      ...edge,
-      targetHandle: handleIndex >= 0 ? `target-${handleIndex}` : undefined,
-    };
-  });
+    const nodeIncomingEdges = new Map<string, RecipeEdge[]>();
+    flowEdges.forEach(edge => {
+      const edges = nodeIncomingEdges.get(edge.target) || [];
+      edges.push(edge);
+      nodeIncomingEdges.set(edge.target, edges);
+    });
 
-  return finalEdges;
+    return flowEdges.map(edge => {
+      const incomingEdges = nodeIncomingEdges.get(edge.target) || [];
+      if (incomingEdges.length <= 1) return edge;
+
+      const sortedEdges = [...incomingEdges].sort((a, b) => {
+        const orderA = a.data?.sequenceOrder || 0;
+        const orderB = b.data?.sequenceOrder || 0;
+        return orderA - orderB;
+      });
+
+      const handleIndex = sortedEdges.findIndex(e => e.id === edge.id);
+      return {
+        ...edge,
+        targetHandle: handleIndex >= 0 ? `target-${handleIndex}` : undefined,
+      };
+    });
+  }, [processes, edges, expandedProcesses]);
 };
 
 /**
