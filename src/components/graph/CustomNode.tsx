@@ -191,6 +191,15 @@ export const CustomNode = memo(({ id, data, selected, type }: NodeProps<CustomNo
   const incomingEdges = flowEdges.filter(edge => edge.target === id);
   const inputCount = incomingEdges.length;
 
+  // 获取输出边数量 - 排除内部边（internal-），它们使用默认的中心 handle
+  const outgoingEdges = flowEdges.filter(edge => edge.source === id && !edge.id.startsWith('internal-'));
+  const outgoingCount = outgoingEdges.length;
+  
+  // 调试日志：验证 outgoingCount 计算
+  if (process.env.NODE_ENV === 'development' && outgoingCount > 1) {
+    console.log(`[CustomNode] Node ${id}: outgoingCount=${outgoingCount}, outgoingEdges:`, outgoingEdges.map(e => ({ id: e.id, target: e.target, sourceHandle: e.sourceHandle })));
+  }
+
   // 判断节点类型
   const isSummaryNode = type === 'processSummaryNode';
   const isSubStepNode = type === 'subStepNode';
@@ -254,7 +263,26 @@ export const CustomNode = memo(({ id, data, selected, type }: NodeProps<CustomNo
             );
           })
         )}
-        <Handle type="source" position={Position.Bottom} className="w-3 h-3 bg-gray-400" />
+        {outgoingCount <= 1 ? (
+          <Handle type="source" position={Position.Bottom} className="w-3 h-3 bg-gray-400" />
+        ) : (
+          Array.from({ length: outgoingCount }).map((_, index) => {
+            const leftPosition = outgoingCount > 1
+              ? 15 + (index * (70 / (outgoingCount - 1)))
+              : 50;
+
+            return (
+              <Handle
+                key={`source-${index}`}
+                id={`source-${index}`}
+                type="source"
+                position={Position.Bottom}
+                className="w-3 h-3 bg-gray-400"
+                style={{ left: `${leftPosition}%` }}
+              />
+            );
+          })
+        )}
       </div>
     );
   }
@@ -340,7 +368,26 @@ export const CustomNode = memo(({ id, data, selected, type }: NodeProps<CustomNo
             );
           })
         )}
-        <Handle type="source" position={Position.Bottom} className="w-3 h-3 bg-gray-400" />
+        {outgoingCount <= 1 ? (
+          <Handle type="source" position={Position.Bottom} className="w-3 h-3 bg-gray-400" />
+        ) : (
+          Array.from({ length: outgoingCount }).map((_, index) => {
+            const leftPosition = outgoingCount > 1
+              ? 15 + (index * (70 / (outgoingCount - 1)))
+              : 50;
+
+            return (
+              <Handle
+                key={`source-${index}`}
+                id={`source-${index}`}
+                type="source"
+                position={Position.Bottom}
+                className="w-3 h-3 bg-gray-400"
+                style={{ left: `${leftPosition}%` }}
+              />
+            );
+          })
+        )}
       </div>
     );
   }

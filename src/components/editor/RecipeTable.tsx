@@ -672,19 +672,19 @@ export function RecipeTable() {
           collisionDetection={closestCenter}
           onDragEnd={handleDragEnd}
         >
-          <Table className="table-fixed w-full">
+          <Table className="table-fixed w-full min-w-[800px]">
             <TableHeader className="sticky top-0 z-10 bg-white shadow-sm">
               <TableRow>
-                <TableHead className="w-[80px]">工艺段</TableHead>
-                <TableHead className="w-[100px]">步骤ID</TableHead>
-                <TableHead className="w-[15%]">步骤名称</TableHead>
-                <TableHead className="w-[100px]">工艺类型</TableHead>
-                <TableHead className="w-[120px]">位置/设备</TableHead>
-                <TableHead className="w-[15%]">原料/内容</TableHead>
-                <TableHead className="w-[200px]">关键参数</TableHead>
-                <TableHead className="w-[100px]">预计耗时</TableHead>
-                <TableHead className="w-[120px]">调度约束</TableHead>
-                <TableHead className="w-[80px]">操作</TableHead>
+                <TableHead className="w-[60px] min-w-[60px] whitespace-nowrap">工艺段</TableHead>
+                <TableHead className="w-[60px] min-w-[60px] whitespace-nowrap">步骤ID</TableHead>
+                <TableHead className="min-w-[80px] whitespace-nowrap truncate">步骤名称</TableHead>
+                <TableHead className="w-[70px] min-w-[70px] whitespace-nowrap">工艺类型</TableHead>
+                <TableHead className="min-w-[80px] whitespace-nowrap truncate">位置/设备</TableHead>
+                <TableHead className="min-w-[60px] whitespace-nowrap truncate">原料/内容</TableHead>
+                <TableHead className="min-w-[80px] whitespace-nowrap truncate">关键参数</TableHead>
+                <TableHead className="w-[70px] min-w-[70px] whitespace-nowrap">预计耗时</TableHead>
+                <TableHead className="w-[70px] min-w-[70px] whitespace-nowrap">调度约束</TableHead>
+                <TableHead className="w-[50px] min-w-[50px] whitespace-nowrap">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

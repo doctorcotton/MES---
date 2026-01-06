@@ -25,6 +25,31 @@ interface RecipeStore {
 
   // 节点位置缓存（用于流程图布局）
   nodePositions: Record<string, { x: number; y: number }>; // 缓存计算好的节点位置
+  nodeHeights: Record<string, number>; // 缓存计算好的节点高度（用于调试）
+  nodeWidths: Record<string, number>; // 缓存计算好的节点宽度（用于调试）
+  layoutValidation: {
+    parallelSegmentStats: Array<{
+      segmentId: string;
+      avgEdgeLength: number;
+      stdDeviation: number;
+      allEdgeLengths: number[];
+      minEdgeLength: number;
+      maxEdgeLength: number;
+    }>;
+    serialSegmentStats: {
+      avgEdgeLength: number;
+      stdDeviation: number;
+      allEdgeLengths: number[];
+      minEdgeLength: number;
+      maxEdgeLength: number;
+    };
+    overallStats: {
+      totalParallelEdges: number;
+      totalSerialEdges: number;
+      avgParallelEdgeLength: number;
+      avgSerialEdgeLength: number;
+    };
+  } | null; // 布局验证结果（用于调试）
 
   // Process操作
   addProcess: (process: Process) => void;
@@ -66,6 +91,31 @@ interface RecipeStore {
 
   // Layout
   setNodePositions: (positions: Record<string, { x: number; y: number }>) => void;
+  setNodeHeights: (heights: Record<string, number>) => void;
+  setNodeWidths: (widths: Record<string, number>) => void;
+  setLayoutValidation: (validation: {
+    parallelSegmentStats: Array<{
+      segmentId: string;
+      avgEdgeLength: number;
+      stdDeviation: number;
+      allEdgeLengths: number[];
+      minEdgeLength: number;
+      maxEdgeLength: number;
+    }>;
+    serialSegmentStats: {
+      avgEdgeLength: number;
+      stdDeviation: number;
+      allEdgeLengths: number[];
+      minEdgeLength: number;
+      maxEdgeLength: number;
+    };
+    overallStats: {
+      totalParallelEdges: number;
+      totalSerialEdges: number;
+      avgParallelEdgeLength: number;
+      avgSerialEdgeLength: number;
+    };
+  } | null) => void;
 }
 
 export const useRecipeStore = create<RecipeStore>((set, get) => ({
@@ -82,6 +132,9 @@ export const useRecipeStore = create<RecipeStore>((set, get) => ({
   isSaving: false,
   expandedProcesses: new Set(initialProcesses.map(p => p.id)), // 默认全部展开
   nodePositions: {}, // 节点位置缓存
+  nodeHeights: {}, // 节点高度缓存
+  nodeWidths: {}, // 节点宽度缓存
+  layoutValidation: null, // 布局验证结果
 
   // Process操作
   addProcess: (process) => {
@@ -473,6 +526,18 @@ export const useRecipeStore = create<RecipeStore>((set, get) => ({
     set({ nodePositions: positions });
   },
 
+  setNodeHeights: (heights) => {
+    set({ nodeHeights: heights });
+  },
+
+  setNodeWidths: (widths) => {
+    set({ nodeWidths: widths });
+  },
+
+  setLayoutValidation: (validation) => {
+    set({ layoutValidation: validation });
+  },
+
   saveToServer: async (userId?: string) => {
     const state = get();
     state.setSaving(true);
@@ -649,6 +714,7 @@ export const useFlowEdges = (): RecipeEdge[] => {
   const processes = useRecipeStore((state) => state.processes);
   const edges = useRecipeStore((state) => state.edges);
   const expandedProcesses = useRecipeStore((state) => state.expandedProcesses);
+  const nodePositions = useRecipeStore((state) => state.nodePositions);
 
   return useMemo(() => {
     const flowEdges: RecipeEdge[] = [];
@@ -702,30 +768,95 @@ export const useFlowEdges = (): RecipeEdge[] => {
       }
     });
 
+    // 1. Group edges by target for targetHandle assignment
     const nodeIncomingEdges = new Map<string, RecipeEdge[]>();
+    // 2. Group edges by source for sourceHandle assignment
+    const nodeOutgoingEdges = new Map<string, RecipeEdge[]>();
+
     flowEdges.forEach(edge => {
-      const edges = nodeIncomingEdges.get(edge.target) || [];
-      edges.push(edge);
-      nodeIncomingEdges.set(edge.target, edges);
+      // Incoming
+      const inEdges = nodeIncomingEdges.get(edge.target) || [];
+      inEdges.push(edge);
+      nodeIncomingEdges.set(edge.target, inEdges);
+
+      // Outgoing - 排除内部边，它们使用默认的中心 handle
+      if (!edge.id.startsWith('internal-')) {
+        const outEdges = nodeOutgoingEdges.get(edge.source) || [];
+        outEdges.push(edge);
+        nodeOutgoingEdges.set(edge.source, outEdges);
+      }
     });
 
     return flowEdges.map(edge => {
+      // Logic for Target Handle (unchanged)
       const incomingEdges = nodeIncomingEdges.get(edge.target) || [];
-      if (incomingEdges.length <= 1) return edge;
+      let targetHandle: string | undefined;
 
-      const sortedEdges = [...incomingEdges].sort((a, b) => {
-        const orderA = a.data?.sequenceOrder || 0;
-        const orderB = b.data?.sequenceOrder || 0;
-        return orderA - orderB;
-      });
+      if (incomingEdges.length > 1) {
+        const sortedInEdges = [...incomingEdges].sort((a, b) => {
+          const orderA = a.data?.sequenceOrder || 0;
+          const orderB = b.data?.sequenceOrder || 0;
+          return orderA - orderB;
+        });
+        const handleIndex = sortedInEdges.findIndex(e => e.id === edge.id);
+        if (handleIndex >= 0) targetHandle = `target-${handleIndex}`;
+      }
 
-      const handleIndex = sortedEdges.findIndex(e => e.id === edge.id);
+      // Logic for Source Handle (new)
+      const outgoingEdges = nodeOutgoingEdges.get(edge.source) || [];
+      let sourceHandle: string | undefined;
+
+      if (outgoingEdges.length > 1) {
+        // Sort outgoing edges by target node's X position (left to right)
+        const sortedOutEdges = [...outgoingEdges].sort((a, b) => {
+          // 优先使用 nodePositions 中的 X 坐标排序
+          const posA = nodePositions[a.target];
+          const posB = nodePositions[b.target];
+
+          if (posA && posB) {
+            // 按 X 坐标排序（左 -> 右）
+            if (Math.abs(posA.x - posB.x) > 1) {
+              return posA.x - posB.x;
+            }
+            // X 坐标接近时按 Y 坐标排序
+            return posA.y - posB.y;
+          }
+
+          // 降级：使用 process index 排序
+          const getSortKey = (nodeId: string): number => {
+            const pIndex = processes.findIndex(p => p.id === nodeId);
+            if (pIndex >= 0) return pIndex * 1000;
+
+            for (let i = 0; i < processes.length; i++) {
+              const p = processes[i];
+              const sIndex = p.node.subSteps.findIndex(s => s.id === nodeId);
+              if (sIndex >= 0) {
+                return (i * 1000) + (sIndex + 1);
+              }
+            }
+            return 999999;
+          };
+
+          return getSortKey(a.target) - getSortKey(b.target);
+        });
+
+        const handleIndex = sortedOutEdges.findIndex(e => e.id === edge.id);
+        if (handleIndex >= 0) {
+          sourceHandle = `source-${handleIndex}`;
+          // 调试日志：验证 sourceHandle 分配
+          if (process.env.NODE_ENV === 'development') {
+            console.log(`[SourceHandle] Edge ${edge.id}: source=${edge.source}, outgoingCount=${outgoingEdges.length}, handleIndex=${handleIndex}, sourceHandle=${sourceHandle}`);
+          }
+        }
+      }
+
       return {
         ...edge,
-        targetHandle: handleIndex >= 0 ? `target-${handleIndex}` : undefined,
+        targetHandle,
+        sourceHandle,
       };
     });
-  }, [processes, edges, expandedProcesses]);
+  }, [processes, edges, expandedProcesses, nodePositions]);
 };
 
 /**

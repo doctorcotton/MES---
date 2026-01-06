@@ -2,8 +2,17 @@ import { useEffect, useRef } from 'react';
 import dagre from 'dagre';
 import { FlowNode, RecipeEdge, ProcessType } from '../types/recipe';
 import { useRecipeStore, useFlowNodes, useFlowEdges } from '../store/useRecipeStore';
+import { identifyProcessSegments } from './segmentIdentifier';
+import {
+  layoutParallelSegments,
+  calculateConvergenceY,
+  layoutSerialSegments,
+  validateSegmentLayout,
+} from './segmentLayoutCalculator';
 
 // 布局配置参数
+const USE_SEGMENT_LAYOUT = true; // 使用新的工艺段布局算法，设为false可回退到旧算法
+
 const LAYOUT_CONFIG = {
   baseNodeWidth: 200,
   baseNodeHeight: 120,
@@ -23,6 +32,11 @@ const LAYOUT_CONFIG = {
   charWidth: 8,           // 每个字符平均宽度（px）
   lineHeight: 20,         // 每行文本高度（px）
   minContentWidth: 150,   // 内容区域最小宽度（考虑padding）
+  // 工艺段布局参数
+  targetEdgeLength: 120,              // 目标连线长度（固定值）
+  convergenceStrategy: 'max' as 'max' | 'weighted' | 'median',  // 汇聚点处理策略
+  // 保留targetEdgeGap用于向后兼容
+  targetEdgeGap: 120,     // 节点边缘之间的目标最小距离（连线最短长度，已废弃，使用targetEdgeLength）
 };
 
 /**
@@ -40,14 +54,119 @@ function calculateTieredWidth(inputCount: number): number {
 }
 
 /**
+ * 使用 Canvas API 精确测量文字换行
+ * 考虑实际字体样式，支持中英文混排
+ */
+function wrapText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number
+): string[] {
+  if (!text) return [];
+  
+  const lines: string[] = [];
+  let currentLine = '';
+  
+  // 按字符遍历（支持中文、英文、数字）
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const testLine = currentLine + char;
+    const metrics = ctx.measureText(testLine);
+    
+    if (metrics.width > maxWidth && currentLine.length > 0) {
+      // 当前行已满，开始新行
+      lines.push(currentLine);
+      currentLine = char;
+    } else {
+      currentLine = testLine;
+    }
+  }
+  
+  // 添加最后一行
+  if (currentLine) {
+    lines.push(currentLine);
+  }
+  
+  return lines.length > 0 ? lines : [''];
+}
+
+/**
+ * 使用 Canvas API 精确测量文本高度
+ * 返回文本在给定宽度下需要的行数和总高度
+ */
+function measureTextHeight(
+  text: string,
+  availableWidth: number,
+  fontSize: number = 12,
+  fontFamily: string = 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  lineHeight: number = 20
+): { lineCount: number; totalHeight: number } {
+  if (!text || availableWidth <= 0) {
+    return { lineCount: 0, totalHeight: 0 };
+  }
+  
+  const isDebug = typeof window !== 'undefined' && localStorage.getItem('debug_layout') === 'true';
+  
+  // 创建离屏 Canvas 进行测量
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  
+  if (!ctx) {
+    // Canvas 不可用时，回退到简单估算
+    const { charWidth } = LAYOUT_CONFIG;
+    const estimatedCharsPerLine = Math.floor(availableWidth / charWidth);
+    const lineCount = estimatedCharsPerLine > 0 
+      ? Math.max(1, Math.ceil(text.length / estimatedCharsPerLine))
+      : 1;
+    const result = { lineCount, totalHeight: lineCount * lineHeight };
+    
+    if (isDebug) {
+      console.log('[Debug] measureTextHeight (fallback):', {
+        text: text.substring(0, 30) + (text.length > 30 ? '...' : ''),
+        availableWidth,
+        estimatedCharsPerLine,
+        lineCount,
+        totalHeight: result.totalHeight,
+      });
+    }
+    
+    return result;
+  }
+  
+  // 设置字体样式（与实际渲染保持一致）
+  ctx.font = `${fontSize}px ${fontFamily}`;
+  
+  // 计算换行
+  const lines = wrapText(ctx, text, availableWidth);
+  const lineCount = lines.length;
+  const result = {
+    lineCount,
+    totalHeight: lineCount * lineHeight
+  };
+  
+  if (isDebug) {
+    console.log('[Debug] measureTextHeight:', {
+      text: text.substring(0, 30) + (text.length > 30 ? '...' : ''),
+      availableWidth,
+      fontSize,
+      lineCount,
+      totalHeight: result.totalHeight,
+      lines: lines.map(l => l.substring(0, 20) + (l.length > 20 ? '...' : '')),
+    });
+  }
+  
+  return result;
+}
+
+/**
  * 估算文本内容在给定宽度下的行数（考虑换行）
+ * 使用 Canvas API 精确测量，回退到简单估算
  */
 function estimateTextLines(text: string, availableWidth: number): number {
-  if (!text) return 0;
-  const { charWidth } = LAYOUT_CONFIG;
-  const estimatedCharsPerLine = Math.floor(availableWidth / charWidth);
-  if (estimatedCharsPerLine <= 0) return 1;
-  return Math.max(1, Math.ceil(text.length / estimatedCharsPerLine));
+  if (!text || availableWidth <= 0) return 0;
+  
+  const result = measureTextHeight(text, availableWidth);
+  return result.lineCount;
 }
 
 /**
@@ -70,15 +189,35 @@ function estimateNodeHeight(node: FlowNode, nodeWidth: number): number {
   if (node.type === 'subStepNode' && node.data.subStep) {
     const subStep = node.data.subStep;
     let paramLines = 0;
-    let contentLines = 0;
+    let contentHeight = 0; // 使用精确高度而非行数
 
-    // 估算位置和原料的换行行数
+    const isDebug = typeof window !== 'undefined' && localStorage.getItem('debug_layout') === 'true';
+    
+    if (isDebug) {
+      console.group(`[Debug] 节点高度计算: ${node.id}`);
+      console.log('节点类型:', node.type);
+      console.log('节点宽度:', nodeWidth);
+    }
+
+    // 使用 Canvas API 精确测量位置和原料的文本高度
     const availableWidth = nodeWidth - (contentPadding * 2);
+    const fontSize = 12; // 与实际渲染字体大小一致
+    
     if (subStep.deviceCode) {
-      contentLines += estimateTextLines(`位置: ${subStep.deviceCode}`, availableWidth);
+      const deviceText = `位置: ${subStep.deviceCode}`;
+      const measurement = measureTextHeight(deviceText, availableWidth, fontSize);
+      contentHeight += measurement.totalHeight;
+      if (isDebug) {
+        console.log('位置文本:', deviceText, '→', measurement.lineCount, '行', measurement.totalHeight, 'px');
+      }
     }
     if (subStep.ingredients) {
-      contentLines += estimateTextLines(`原料: ${subStep.ingredients}`, availableWidth);
+      const ingredientsText = `原料: ${subStep.ingredients}`;
+      const measurement = measureTextHeight(ingredientsText, availableWidth, fontSize);
+      contentHeight += measurement.totalHeight;
+      if (isDebug) {
+        console.log('原料文本:', ingredientsText, '→', measurement.lineCount, '行', measurement.totalHeight, 'px');
+      }
     }
 
     // 根据工艺类型估算参数行数
@@ -113,9 +252,25 @@ function estimateNodeHeight(node: FlowNode, nodeWidth: number): number {
         paramLines = 1;
     }
 
-    // 总高度 = 标题 + 内容行 + 参数行 + 内边距
-    const totalLines = Math.max(contentLines, 2) + paramLines; // 至少2行基础内容
-    return headerHeight + (totalLines * lineHeight) + padding;
+    // 总高度 = 标题 + 内容高度 + 参数行高度 + 内边距
+    // 确保至少有最小内容高度（2行）
+    const minContentHeight = 2 * lineHeight;
+    const actualContentHeight = Math.max(contentHeight, minContentHeight);
+    const paramHeight = paramLines * lineHeight;
+    
+    const finalHeight = headerHeight + actualContentHeight + paramHeight + padding;
+    
+    if (isDebug) {
+      console.log('参数行数:', paramLines);
+      console.log('内容高度:', contentHeight, 'px (最小', minContentHeight, 'px)');
+      console.log('参数高度:', paramHeight, 'px');
+      console.log('标题高度:', headerHeight, 'px');
+      console.log('内边距:', padding, 'px');
+      console.log('最终高度:', finalHeight, 'px');
+      console.groupEnd();
+    }
+    
+    return finalHeight;
   }
 
   return headerHeight + baseBodyHeight + padding;
@@ -304,53 +459,8 @@ function reorderRootNodes(
 }
 
 
-/**
- * 计算反向层级：从终点节点开始反向BFS，标记每个节点距离终点的步数
- * 这样相同反向层级的节点可以对齐在同一Y坐标
- */
-function calculateReverseLevel(nodes: FlowNode[], edges: RecipeEdge[]): Record<string, number> {
-  const levels: Record<string, number> = {};
-
-  // 1. 找到终点节点（出度为0的节点）
-  const endNodes = nodes.filter(n => !edges.some(e => e.source === n.id));
-
-  if (endNodes.length === 0) {
-    // 如果没有终点节点，从所有节点开始，层级为0
-    nodes.forEach(n => levels[n.id] = 0);
-    return levels;
-  }
-
-  // 2. 反向BFS：从终点节点开始，向上遍历
-  const queue: Array<{ id: string; level: number }> = endNodes.map(n => ({ id: n.id, level: 0 }));
-  const visited = new Set<string>();
-
-  while (queue.length > 0) {
-    const { id, level } = queue.shift()!;
-
-    if (visited.has(id)) continue;
-    visited.add(id);
-    levels[id] = level;
-
-    // 找到所有指向当前节点的节点（父节点）
-    const parents = edges
-      .filter(e => e.target === id)
-      .map(e => e.source)
-      .filter(p => !visited.has(p));
-
-    parents.forEach(p => {
-      queue.push({ id: p, level: level + 1 });
-    });
-  }
-
-  // 处理孤立节点（没有连接关系的节点）
-  nodes.forEach(node => {
-    if (!(node.id in levels)) {
-      levels[node.id] = 0;
-    }
-  });
-
-  return levels;
-}
+// 已删除：calculateTargetMinEdgeLength, analyzeEdgeLengths, optimizeEdgeLengths, calculateReverseLevel
+// 这些函数已被新的工艺段布局算法替代
 
 /**
  * 获取节点的所有上游节点（递归遍历所有祖先节点）
@@ -761,15 +871,36 @@ export function useAutoLayout() {
       prevEdgesRef.current === edgesSignature &&
       prevProcessOrderRef.current === processOrderSignature &&
       !allNodesHaveTempPosition) {
+      console.log('[Layout] 跳过布局计算（缓存命中）');
       return;
     }
+
+    console.log('[Layout] 开始重新计算布局', {
+      nodesChanged: prevNodesRef.current !== nodesSignature,
+      edgesChanged: prevEdgesRef.current !== edgesSignature,
+      processOrderChanged: prevProcessOrderRef.current !== processOrderSignature,
+      allNodesHaveTempPosition
+    });
 
     prevNodesRef.current = nodesSignature;
     prevEdgesRef.current = edgesSignature;
     prevProcessOrderRef.current = processOrderSignature;
 
-    // ========== 步骤1: 计算反向层级 ==========
-    const reverseLevels = calculateReverseLevel(nodes, edges);
+    // ========== 步骤1: 识别工艺段 ==========
+    const { parallelSegments, convergenceNode, serialSegments } = 
+      identifyProcessSegments(nodes, edges);
+
+    console.log('[Layout] 工艺段识别:', {
+      parallelCount: parallelSegments.length,
+      convergenceNodeId: convergenceNode?.id,
+      serialCount: serialSegments.length,
+      parallelSegments: parallelSegments.map(s => ({
+        id: s.id,
+        nodeCount: s.nodes.length,
+        startNode: s.startNodeId.substring(0, 20),
+        endNode: s.endNodeId.substring(0, 20),
+      })),
+    });
 
     // ========== 步骤2: 计算每个节点的输入边 ==========
     const nodeIncomingEdges: Record<string, typeof edges> = {};
@@ -858,13 +989,9 @@ export function useAutoLayout() {
       initialPositions[node.id] = { x: pos.x, y: pos.y };
     });
 
-    // ========== 步骤5: 基于 displayOrder 计算 X 坐标，使用反向层级计算 Y 坐标 ==========
+    // ========== 步骤5: 基于 displayOrder 计算 X 坐标，使用工艺段布局计算 Y 坐标 ==========
     // 核心改进：X 坐标直接由 displayOrder（表格顺序）决定，而非 dagre
-    // 这样确保了流程图的水平排列始终与表格顺序一致
-
-    const levelGroups = groupByLevel(nodes, reverseLevels);
-    // 反向层级：level 0是终点（最底层），level越大越靠上
-    const levelKeys = Object.keys(levelGroups).map(Number).sort((a, b) => b - a);
+    // Y 坐标使用新的工艺段分段布局算法
 
     // 5.1: 计算每个 Process 的水平区域（基于 displayOrder）
     const PROCESS_LANE_WIDTH = 300; // 每个工艺段的水平"车道"宽度
@@ -906,58 +1033,92 @@ export function useAutoLayout() {
       });
     });
 
-    // 5.3: 计算 Y 坐标（使用自适应间距和动态高度）
-    // 增加起始 Y 偏移，避免第一行节点上方的圈号被遮挡
-    let currentY = 80;
+    // 5.3: 计算 Y 坐标（使用工艺段分段布局算法）
+    const INITIAL_Y = 80;
 
-    levelKeys.forEach((level, index) => {
-      const levelNodes = levelGroups[level];
-
-      // 计算层间距
-      if (index > 0) {
-        const prevLevel = levelKeys[index - 1];
-        const prevLevelNodes = levelGroups[prevLevel];
-        const maxPrevHeight = Math.max(...prevLevelNodes.map(n => {
-          const cachedHeight = calculatedNodeHeights[n.id];
-          if (cachedHeight) return cachedHeight;
-          const width = calculatedNodeWidths[n.id] || LAYOUT_CONFIG.baseNodeWidth;
-          return estimateNodeHeight(n, width);
-        }));
-
-        const currentLevelMaxHeight = Math.max(...levelNodes.map(n => {
-          const cachedHeight = calculatedNodeHeights[n.id];
-          if (cachedHeight) return cachedHeight;
-          const width = calculatedNodeWidths[n.id] || LAYOUT_CONFIG.baseNodeWidth;
-          return estimateNodeHeight(n, width);
-        }));
-
-        // 基础间距 = 上层节点底部到当前层节点顶部的距离
-        // 增加乘数因子（1.2）来补偿高度估算可能的不足
-        const heightBuffer = 1.2;
-        const baseSpacing = (maxPrevHeight * heightBuffer / 2) + (currentLevelMaxHeight * heightBuffer / 2) + 80;
-
-        // 额外间距（多输入节点需要更多空间用于显示入口圈号）
-        const maxInputNode = levelNodes.reduce((max, node) => {
-          const maxInputs = nodeIncomingEdges[max.id]?.length || 0;
-          const nodeInputs = nodeIncomingEdges[node.id]?.length || 0;
-          return nodeInputs > maxInputs ? node : max;
-        }, levelNodes[0]);
-
-        const extraSpacing = calculateAdaptiveSpacing(maxInputNode, edges) - LAYOUT_CONFIG.baseRankSep;
-
-        // 最终间距，确保最小值为 100px
-        const MIN_LEVEL_SPACING = 100;
-        const spacing = Math.max(MIN_LEVEL_SPACING, baseSpacing + Math.max(0, extraSpacing));
-
-        currentY += spacing;
+    // 步骤2: 布局并行工艺段（每段内部独立均匀间距）
+    const parallelYPositions = layoutParallelSegments(
+      parallelSegments,
+      calculatedNodeHeights,
+      {
+        targetEdgeLength: LAYOUT_CONFIG.targetEdgeLength,
+        initialY: INITIAL_Y
       }
+    );
 
-      // 为这一层的所有节点分配 Y 坐标（X 已在上方基于 displayOrder 分配）
-      levelNodes.forEach(node => {
-        if (nodePositions[node.id]) {
-          nodePositions[node.id].y = currentY;
-        }
-      });
+    // 步骤3: 计算汇聚点Y坐标
+    let convergenceY = INITIAL_Y;
+    if (convergenceNode) {
+      convergenceY = calculateConvergenceY(
+        parallelSegments,
+        parallelYPositions,
+        calculatedNodeHeights,
+        LAYOUT_CONFIG.targetEdgeLength,
+        LAYOUT_CONFIG.convergenceStrategy
+      );
+      
+      // 设置汇聚点的Y坐标
+      if (nodePositions[convergenceNode.id]) {
+        nodePositions[convergenceNode.id].y = convergenceY;
+      }
+    }
+
+    // 步骤4: 布局串行工艺段（统一间距）
+    const serialYPositions = layoutSerialSegments(
+      serialSegments,
+      convergenceY + (convergenceNode ? calculatedNodeHeights[convergenceNode.id] || 120 : 0),
+      calculatedNodeHeights,
+      {
+        targetEdgeLength: LAYOUT_CONFIG.targetEdgeLength
+      }
+    );
+
+    // 步骤5: 合并Y坐标到nodePositions（只更新Y坐标，保留X坐标）
+    Object.keys(parallelYPositions).forEach(nodeId => {
+      if (nodePositions[nodeId]) {
+        nodePositions[nodeId].y = parallelYPositions[nodeId];
+      } else {
+        // 如果节点还没有位置，创建一个新对象（X坐标稍后会被设置）
+        nodePositions[nodeId] = { x: 0, y: parallelYPositions[nodeId] };
+      }
+    });
+    
+    Object.keys(serialYPositions).forEach(nodeId => {
+      if (nodePositions[nodeId]) {
+        nodePositions[nodeId].y = serialYPositions[nodeId];
+      } else {
+        // 如果节点还没有位置，创建一个新对象（X坐标稍后会被设置）
+        nodePositions[nodeId] = { x: 0, y: serialYPositions[nodeId] };
+      }
+    });
+
+    // 步骤6: 验证布局结果
+    const validationResult = validateSegmentLayout(
+      parallelSegments,
+      serialSegments,
+      nodePositions,
+      calculatedNodeHeights,
+      LAYOUT_CONFIG.targetEdgeLength
+    );
+
+    console.log('[Layout] 布局验证:', {
+      parallelSegments: validationResult.parallelSegmentStats.map(stat => ({
+        segmentId: stat.segmentId,
+        avgEdgeLength: stat.avgEdgeLength.toFixed(1),
+        stdDeviation: stat.stdDeviation.toFixed(1),
+        minEdgeLength: stat.minEdgeLength.toFixed(1),
+        maxEdgeLength: stat.maxEdgeLength.toFixed(1),
+      })),
+      serialSegment: {
+        avgEdgeLength: validationResult.serialSegmentStats.avgEdgeLength.toFixed(1),
+        stdDeviation: validationResult.serialSegmentStats.stdDeviation.toFixed(1),
+      },
+      overall: {
+        totalParallelEdges: validationResult.overallStats.totalParallelEdges,
+        totalSerialEdges: validationResult.overallStats.totalSerialEdges,
+        avgParallelEdgeLength: validationResult.overallStats.avgParallelEdgeLength.toFixed(1),
+        avgSerialEdgeLength: validationResult.overallStats.avgSerialEdgeLength.toFixed(1),
+      },
     });
 
     // ========== 步骤6: 汇聚点水平居中 ==========
@@ -1003,5 +1164,12 @@ export function useAutoLayout() {
 
     // 保存位置到 Store，供 useFlowNodes 使用
     useRecipeStore.getState().setNodePositions(finalPositions);
+    
+    // 保存节点高度和宽度到 Store，供调试组件使用
+    useRecipeStore.getState().setNodeHeights(calculatedNodeHeights);
+    useRecipeStore.getState().setNodeWidths(calculatedNodeWidths);
+    
+    // 保存布局验证结果到 Store，供调试面板使用
+    useRecipeStore.getState().setLayoutValidation(validationResult);
   }, [nodes, edges, processes]); // 添加 processes 作为依赖，确保顺序变化时重新布局
 }
