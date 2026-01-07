@@ -74,7 +74,7 @@ export const initialProcesses: Process[] = [
           params: {
             processType: ProcessType.TRANSFER,
             transferParams: {
-              transferType: 'material'
+              transfer_transferType: 'material'
             }
           }
         }
@@ -135,7 +135,7 @@ export const initialProcesses: Process[] = [
           params: {
             processType: ProcessType.TRANSFER,
             transferParams: {
-              transferType: 'material'
+              transfer_transferType: 'material'
             }
           }
         }
@@ -196,8 +196,8 @@ export const initialProcesses: Process[] = [
           params: {
             processType: ProcessType.TRANSFER,
             transferParams: {
-              transferType: 'water',
-              waterVolume: { value: 2000, unit: 'L' },
+              transfer_transferType: 'water',
+              transfer_waterVolume: { value: 2000, unit: 'L' },
               cleaning: "人工清洗桶壁至无料液残留"
             }
           }
@@ -259,8 +259,8 @@ export const initialProcesses: Process[] = [
           params: {
             processType: ProcessType.TRANSFER,
             transferParams: {
-              transferType: 'water',
-              waterVolume: { value: 2000, unit: 'L' },
+              transfer_transferType: 'water',
+              transfer_waterVolume: { value: 2000, unit: 'L' },
               cleaning: "人工清洗桶壁至无料液残留"
             }
           }
@@ -327,7 +327,7 @@ export const initialProcesses: Process[] = [
                 { order: 7, type: 'rawMaterial', source: 'P5', name: '香精' }
               ],
               stirringSpeed: { value: 90, unit: '%', condition: '>=' },
-              stirringTime: { value: 10, unit: 'min' },
+              compounding_stirringTime: { value: 10, unit: 'min' },
               finalTemp: { max: 30, unit: '℃' }
             }
           }

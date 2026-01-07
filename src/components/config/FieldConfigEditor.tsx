@@ -39,6 +39,8 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Trash2, Edit, Plus, Search, BarChart3, List, AlertCircle } from 'lucide-react';
 import { getProcessTypeName } from '@/types/processTypeConfig';
+import { useProcessTypeConfigStore } from '@/store/useProcessTypeConfigStore';
+import { ProcessTypes } from '@/types/recipe';
 import { NestedFieldEditor } from './NestedFieldEditor';
 import { SelectOptionsEditor } from './SelectOptionsEditor';
 import { v4 as uuidv4 } from 'uuid';
@@ -46,20 +48,24 @@ import { v4 as uuidv4 } from 'uuid';
 // 动态获取工艺类型列表
 const getProcessTypes = (): { value: ProcessType; label: string }[] => {
     try {
-        const { useProcessTypeConfigStore } = require('@/store/useProcessTypeConfigStore');
+        // 尝试从 store 获取所有类型（包括自定义类型）
         const types = useProcessTypeConfigStore.getState().getAllSubStepTypes();
-        return types.map(type => ({
-            value: type,
-            label: getProcessTypeName(type)
-        }));
-    } catch {
-        // 如果 store 未初始化，返回基础类型
-        const { ProcessTypes } = require('@/types/recipe');
-        return Object.values(ProcessTypes).map(type => ({
-            value: type,
-            label: getProcessTypeName(type)
-        }));
+        if (types && types.length > 0) {
+            return types.map(type => ({
+                value: type,
+                label: getProcessTypeName(type)
+            }));
+        }
+    } catch (error) {
+        // Store 可能未初始化，忽略错误
+        console.warn('Failed to get process types from store, using defaults:', error);
     }
+    
+    // 回退：使用基础类型常量
+    return Object.values(ProcessTypes).map(type => ({
+        value: type,
+        label: getProcessTypeName(type)
+    }));
 };
 
 const PROCESS_TYPES: { value: ProcessType; label: string }[] = getProcessTypes();
@@ -120,6 +126,11 @@ export const FieldConfigEditor: React.FC = () => {
                 else if (s.processType === ProcessType.FILTRATION && 'filtrationParams' in s.params) stepParams = s.params.filtrationParams;
                 else if (s.processType === ProcessType.TRANSFER && 'transferParams' in s.params) stepParams = s.params.transferParams;
                 else if (s.processType === ProcessType.FLAVOR_ADDITION && 'flavorAdditionParams' in s.params) stepParams = s.params.flavorAdditionParams;
+                else if (s.processType === ProcessType.EXTRACTION && 'extractionParams' in s.params) stepParams = s.params.extractionParams;
+                else if (s.processType === ProcessType.CENTRIFUGE && 'centrifugeParams' in s.params) stepParams = s.params.centrifugeParams;
+                else if (s.processType === ProcessType.COOLING && 'coolingParams' in s.params) stepParams = s.params.coolingParams;
+                else if (s.processType === ProcessType.HOLDING && 'holdingParams' in s.params) stepParams = s.params.holdingParams;
+                else if (s.processType === ProcessType.MEMBRANE_FILTRATION && 'membraneFiltrationParams' in s.params) stepParams = s.params.membraneFiltrationParams;
 
                 Object.keys(stepParams).forEach(key => {
                     if (stats[key]) {
@@ -136,6 +147,15 @@ export const FieldConfigEditor: React.FC = () => {
     const handleSave = async () => {
         if (!editingConfig) return;
 
+        // 检查 key 是否重复（全局范围）
+        if (editingConfig.key) {
+            const duplicate = configs.find(c => c.key === editingConfig.key && c.id !== editingConfig.id);
+            if (duplicate) {
+                alert(`字段 key "${editingConfig.key}" 已存在（工艺类型: ${getProcessTypeName(duplicate.processType)}）`);
+                return;
+            }
+        }
+
         try {
             if (editingConfig.id) {
                 await updateConfig(editingConfig.id, editingConfig);
@@ -148,9 +168,14 @@ export const FieldConfigEditor: React.FC = () => {
             }
             setIsDialogOpen(false);
             setEditingConfig(null);
-        } catch (e) {
+        } catch (e: any) {
             console.error(e);
-            alert('Save failed');
+            // 后端也可能返回 409 错误
+            if (e.message && e.message.includes('已存在')) {
+                alert(e.message);
+            } else {
+                alert('Save failed: ' + (e.message || 'Unknown error'));
+            }
         }
     };
 
@@ -382,8 +407,25 @@ export const FieldConfigEditor: React.FC = () => {
                                         onChange={e => setEditingConfig({ ...editingConfig, key: e.target.value })}
                                         disabled={!!editingConfig.id && editingConfig.isSystem}
                                         placeholder="e.g. waterTemp"
+                                        className={(() => {
+                                            if (!editingConfig.key || editingConfig.id) return '';
+                                            const duplicate = configs.find(c => c.key === editingConfig.key && c.id !== editingConfig.id);
+                                            return duplicate ? 'border-red-500' : '';
+                                        })()}
                                     />
                                     {editingConfig.isSystem && <p className="text-[10px] text-muted-foreground">系统字段Key不可修改</p>}
+                                    {(() => {
+                                        if (!editingConfig.key || editingConfig.id) return null;
+                                        const duplicate = configs.find(c => c.key === editingConfig.key && c.id !== editingConfig.id);
+                                        if (duplicate) {
+                                            return (
+                                                <p className="text-[10px] text-red-600">
+                                                    字段 key "{editingConfig.key}" 已存在（工艺类型: {getProcessTypeName(duplicate.processType)}）
+                                                </p>
+                                            );
+                                        }
+                                        return null;
+                                    })()}
                                 </div>
                                 <div className="space-y-2">
                                     <Label>显示名称</Label>
@@ -506,7 +548,16 @@ export const FieldConfigEditor: React.FC = () => {
                     )}
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setIsDialogOpen(false)}>取消</Button>
-                        <Button onClick={handleSave}>保存配置</Button>
+                        <Button 
+                            onClick={handleSave}
+                            disabled={(() => {
+                                if (!editingConfig?.key) return false;
+                                const duplicate = configs.find(c => c.key === editingConfig.key && c.id !== editingConfig.id);
+                                return !!duplicate;
+                            })()}
+                        >
+                            保存配置
+                        </Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>

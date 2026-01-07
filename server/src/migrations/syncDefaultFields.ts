@@ -43,7 +43,7 @@ const PROCESS_TYPE_FIELDS: Record<string, any[]> = {
             ]
         },
         { key: 'stirringSpeed', label: '搅拌速度', inputType: 'conditionValue', unit: '%', validation: { required: true } },
-        { key: 'stirringTime', label: '搅拌时间', inputType: 'number', unit: 'min', validation: { required: true } },
+        { key: 'compounding_stirringTime', label: '搅拌时间', inputType: 'number', unit: 'min', validation: { required: true } },
         {
             key: 'finalTemp', label: '最终温度', inputType: 'object', validation: { required: true },
             fields: [
@@ -63,13 +63,13 @@ const PROCESS_TYPE_FIELDS: Record<string, any[]> = {
     ],
     'transfer': [
         {
-            key: 'transferType', label: '赶料类型', inputType: 'select', options: [
+            key: 'transfer_transferType', label: '赶料类型', inputType: 'select', options: [
                 { value: 'material', label: '料赶料' },
                 { value: 'water', label: '水赶料' },
                 { value: 'none', label: '无' },
             ], validation: { required: true }
         },
-        { key: 'waterVolume', label: '水量', inputType: 'number', unit: 'L', displayCondition: { field: 'transferType', operator: '==', value: 'water' } },
+        { key: 'transfer_waterVolume', label: '水量', inputType: 'number', unit: 'L', displayCondition: { field: 'transfer_transferType', operator: '==', value: 'water' } },
         { key: 'cleaning', label: '清洗要求', inputType: 'text' },
     ],
     'flavorAddition': [
@@ -77,6 +77,158 @@ const PROCESS_TYPE_FIELDS: Record<string, any[]> = {
     ],
     'other': [
         { key: 'params', label: '参数描述', inputType: 'text' },
+    ],
+    'extraction': [
+        { key: 'extraction_extractWaterVolume', label: '萃取水量', inputType: 'conditionValue', unit: 'L' },
+        {
+            key: 'extraction_waterTempRange', label: '水温范围', inputType: 'object', validation: { required: true },
+            fields: [
+                { id: uuidv4(), key: 'min', label: '最低温度', inputType: 'number', unit: '℃' },
+                { id: uuidv4(), key: 'max', label: '最高温度', inputType: 'number', unit: '℃' },
+                { id: uuidv4(), key: 'unit', label: '单位', inputType: 'text', defaultValue: '℃', enabled: false }
+            ]
+        },
+        { key: 'extraction_tempMaxLimit', label: '温度上限', inputType: 'number', unit: '℃', defaultValue: 87, validation: { max: 87 } },
+        {
+            key: 'extraction_teaWaterRatio', label: '茶水比', inputType: 'waterRatio', unit: '(1:X)', 
+            defaultValue: { min: 50, max: 50 }
+        },
+        {
+            key: 'extraction_teaBlend', label: '茶叶配比', inputType: 'array', defaultValue: [],
+            itemFields: [
+                { id: uuidv4(), key: 'teaCode', label: '茶叶代码', inputType: 'text', validation: { required: true } },
+                { id: uuidv4(), key: 'teaName', label: '茶叶名称', inputType: 'text', validation: { required: true } },
+                { id: uuidv4(), key: 'ratioPart', label: '配比份数', inputType: 'number', validation: { required: true } }
+            ]
+        },
+        {
+            key: 'extraction_extractTime', label: '萃取时长', inputType: 'object',
+            fields: [
+                { id: uuidv4(), key: 'value', label: '时长', inputType: 'number', validation: { required: true } },
+                { id: uuidv4(), key: 'unit', label: '单位', inputType: 'select', options: [
+                    { value: 'min', label: '分钟' },
+                    { value: 's', label: '秒' }
+                ], validation: { required: true } }
+            ]
+        },
+        { key: 'extraction_stirProgram', label: '搅拌程序', inputType: 'text' },
+        { key: 'extraction_referenceRpm', label: '参考转速', inputType: 'number', unit: 'r/min', defaultValue: 10 },
+        { key: 'extraction_pourTimeLimitSec', label: '倾倒时间限制', inputType: 'number', unit: 's', defaultValue: 130 },
+        {
+            key: 'extraction_openExtraction', label: '敞口提取', inputType: 'select', options: [
+                { value: '是', label: '是' },
+                { value: '否', label: '否' }
+            ], defaultValue: '是'
+        },
+        {
+            key: 'extraction_stirDuringFeeding', label: '投料期间开启搅拌', inputType: 'select', options: [
+                { value: '是', label: '是' },
+                { value: '否', label: '否' }
+            ], defaultValue: '否'
+        },
+        {
+            key: 'extraction_exhaustFanOff', label: '关闭排气扇', inputType: 'select', options: [
+                { value: '是', label: '是' },
+                { value: '否', label: '否' }
+            ], defaultValue: '是'
+        },
+    ],
+    'centrifuge': [
+        { key: 'centrifuge_inletFilterMesh', label: '入口过滤目数', inputType: 'number', unit: '目', defaultValue: 200 },
+        {
+            key: 'centrifuge_flowRateRange', label: '流量范围', inputType: 'object',
+            fields: [
+                { id: uuidv4(), key: 'min', label: '最小流量', inputType: 'number', unit: 't/h' },
+                { id: uuidv4(), key: 'max', label: '最大流量', inputType: 'number', unit: 't/h' },
+                { id: uuidv4(), key: 'unit', label: '单位', inputType: 'text', defaultValue: 't/h', enabled: false }
+            ],
+            defaultValue: { min: 5.0, max: 5.5, unit: 't/h' }
+        },
+        { key: 'centrifuge_pressureMin', label: '最小压力', inputType: 'conditionValue', unit: 'Bar', defaultValue: { value: 5.0, unit: 'Bar', condition: '>=' } },
+        {
+            key: 'centrifuge_polyphenolsRange', label: '茶多酚范围', inputType: 'object',
+            fields: [
+                { id: uuidv4(), key: 'min', label: '最小值', inputType: 'number', unit: 'mg/kg' },
+                { id: uuidv4(), key: 'max', label: '最大值', inputType: 'number', unit: 'mg/kg' },
+                { id: uuidv4(), key: 'unit', label: '单位', inputType: 'text', defaultValue: 'mg/kg', enabled: false }
+            ],
+            defaultValue: { min: 2000, max: 2400, unit: 'mg/kg' }
+        },
+        {
+            key: 'centrifuge_brixRange', label: 'Brix范围', inputType: 'object',
+            fields: [
+                { id: uuidv4(), key: 'min', label: '最小值', inputType: 'number', unit: 'Brix' },
+                { id: uuidv4(), key: 'max', label: '最大值', inputType: 'number', unit: 'Brix' },
+                { id: uuidv4(), key: 'unit', label: '单位', inputType: 'text', defaultValue: 'Brix', enabled: false }
+            ],
+            defaultValue: { min: 0.51, max: 0.61, unit: 'Brix' }
+        },
+        {
+            key: 'centrifuge_pHRange', label: 'pH范围', inputType: 'object',
+            fields: [
+                { id: uuidv4(), key: 'min', label: '最小值', inputType: 'number', unit: 'pH' },
+                { id: uuidv4(), key: 'max', label: '最大值', inputType: 'number', unit: 'pH' },
+                { id: uuidv4(), key: 'unit', label: '单位', inputType: 'text', defaultValue: 'pH', enabled: false }
+            ],
+            defaultValue: { min: 5.3, max: 5.9, unit: 'pH' }
+        },
+        { key: 'centrifuge_turbidityMax', label: '最大浊度', inputType: 'number', unit: 'NTU', defaultValue: 15 },
+        { key: 'centrifuge_targetFinalPolyphenols', label: '目标最终茶多酚', inputType: 'number', unit: 'mg/kg', defaultValue: 650 },
+    ],
+    'cooling': [
+        { key: 'cooling_targetTempMax', label: '目标最高温度', inputType: 'number', unit: '℃', defaultValue: 15, validation: { max: 15, required: true } },
+        { key: 'cooling_method', label: '冷却方式', inputType: 'text' },
+    ],
+    'holding': [
+        { key: 'holding_settlingTime', label: '静置时间', inputType: 'number', unit: 'min', defaultValue: 10 },
+        { key: 'holding_outletFilterMesh', label: '出口过滤目数', inputType: 'number', unit: '目', defaultValue: 200 },
+        { key: 'holding_container', label: '容器名称', inputType: 'text', defaultValue: '暂存桶' },
+    ],
+    'membraneFiltration': [
+        {
+            key: 'membrane_membraneMaterial', label: '膜材料', inputType: 'select', options: [
+                { value: 'PES', label: 'PES' },
+                { value: '其他', label: '其他' }
+            ], defaultValue: 'PES'
+        },
+        { key: 'membrane_poreSize', label: '孔径', inputType: 'number', unit: 'μm', defaultValue: 0.45 },
+        {
+            key: 'membrane_polyphenolsRange', label: '茶多酚范围', inputType: 'object',
+            fields: [
+                { id: uuidv4(), key: 'min', label: '最小值', inputType: 'number', unit: 'mg/kg' },
+                { id: uuidv4(), key: 'max', label: '最大值', inputType: 'number', unit: 'mg/kg' },
+                { id: uuidv4(), key: 'unit', label: '单位', inputType: 'text', defaultValue: 'mg/kg', enabled: false }
+            ],
+            defaultValue: { min: 2000, max: 2400, unit: 'mg/kg' }
+        },
+        {
+            key: 'membrane_brixRange', label: 'Brix范围', inputType: 'object',
+            fields: [
+                { id: uuidv4(), key: 'min', label: '最小值', inputType: 'number', unit: 'Brix' },
+                { id: uuidv4(), key: 'max', label: '最大值', inputType: 'number', unit: 'Brix' },
+                { id: uuidv4(), key: 'unit', label: '单位', inputType: 'text', defaultValue: 'Brix', enabled: false }
+            ],
+            defaultValue: { min: 0.50, max: 0.60, unit: 'Brix' }
+        },
+        {
+            key: 'membrane_pHRange', label: 'pH范围', inputType: 'object',
+            fields: [
+                { id: uuidv4(), key: 'min', label: '最小值', inputType: 'number', unit: 'pH' },
+                { id: uuidv4(), key: 'max', label: '最大值', inputType: 'number', unit: 'pH' },
+                { id: uuidv4(), key: 'unit', label: '单位', inputType: 'text', defaultValue: 'pH', enabled: false }
+            ],
+            defaultValue: { min: 5.3, max: 5.9, unit: 'pH' }
+        },
+        { key: 'membrane_turbidityMax', label: '最大浊度', inputType: 'number', unit: 'NTU', defaultValue: 5 },
+        { key: 'membrane_endDeltaP', label: '终点压差', inputType: 'number', unit: 'MPa', defaultValue: 0.3 },
+        { key: 'membrane_maxInletPressure', label: '最大进口压力', inputType: 'number', unit: 'MPa', defaultValue: 0.6 },
+        {
+            key: 'membrane_firstBatchFlushRequired', label: '首桶赶水要求', inputType: 'select', options: [
+                { value: '是', label: '是' },
+                { value: '否', label: '否' }
+            ], defaultValue: '是'
+        },
+        { key: 'membrane_flushNote', label: '赶水说明', inputType: 'text' },
     ],
 };
 
@@ -90,16 +242,15 @@ export function syncDefaultFields() {
         WHERE is_system = 1
     `).all() as Array<{ id: string; process_type: string; key: string; is_system: number }>;
 
-    // 建立快速查找索引 (processType + key -> id)
+    // 建立快速查找索引 (key -> id，因为 key 现在是全局唯一的)
     const existingFieldMap = new Map<string, string>();
     existingFields.forEach(field => {
-        const mapKey = `${field.process_type}:${field.key}`;
-        existingFieldMap.set(mapKey, field.id);
+        existingFieldMap.set(field.key, field.id);
     });
 
     console.log(`数据库中已有 ${existingFields.length} 个系统字段配置`);
 
-    // 准备 UPSERT 语句（使用 ON CONFLICT 而不是 INSERT OR REPLACE）
+    // 准备 UPSERT 语句（使用 ON CONFLICT，现在 key 是全局唯一的）
     const upsert = db.prepare(`
         INSERT INTO process_field_configs (
             id, process_type, key, label, input_type, unit, options, 
@@ -112,8 +263,9 @@ export function syncDefaultFields() {
             @isSystem, @enabled, @createdAt, @updatedAt,
             @itemConfig, @itemFields, @fields, @minItems, @maxItems
         )
-        ON CONFLICT(process_type, key) DO UPDATE SET
+        ON CONFLICT(key) DO UPDATE SET
             id = excluded.id,
+            process_type = excluded.process_type,
             label = excluded.label,
             input_type = excluded.input_type,
             unit = excluded.unit,
@@ -150,8 +302,7 @@ export function syncDefaultFields() {
         console.log(`\n处理工艺类型: ${processType} (${fields.length} 个字段)`);
 
         fields.forEach((field, index) => {
-            const mapKey = `${processType}:${field.key}`;
-            const existingId = existingFieldMap.get(mapKey);
+            const existingId = existingFieldMap.get(field.key);
 
             // 如果字段已存在，保留其 ID 并更新；否则生成新 ID
             const fieldId = existingId || uuidv4();

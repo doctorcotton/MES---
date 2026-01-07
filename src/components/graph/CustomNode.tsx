@@ -38,6 +38,7 @@ const SubStepParamsDisplay = ({ subStep, inputSources }: { subStep: SubStep, inp
       [ProcessType.FILTRATION]: 'filtrationParams',
       [ProcessType.TRANSFER]: 'transferParams',
       [ProcessType.FLAVOR_ADDITION]: 'flavorAdditionParams',
+      [ProcessType.EXTRACTION]: 'extractionParams',
     };
 
     if (subStep.processType === ProcessType.OTHER) {

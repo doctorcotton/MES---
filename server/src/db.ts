@@ -23,7 +23,7 @@ export function initDatabase() {
     )
   `);
 
-  // 创建字段配置表
+  // 创建字段配置表（支持全局唯一 key）
   db.exec(`
     CREATE TABLE IF NOT EXISTS process_field_configs (
       id TEXT PRIMARY KEY,
@@ -46,10 +46,11 @@ export function initDatabase() {
       fields TEXT, -- 对象字段的 JSON 字符串
       min_items INTEGER,
       max_items INTEGER,
-      UNIQUE(process_type, key)
+      UNIQUE(key)
     );
     CREATE INDEX IF NOT EXISTS idx_process_type ON process_field_configs(process_type);
     CREATE INDEX IF NOT EXISTS idx_enabled ON process_field_configs(enabled);
+    CREATE INDEX IF NOT EXISTS idx_key ON process_field_configs(key);
   `);
 
   // 迁移现有表
@@ -58,6 +59,9 @@ export function initDatabase() {
   try { db.exec('ALTER TABLE process_field_configs ADD COLUMN fields TEXT'); } catch (e) { }
   try { db.exec('ALTER TABLE process_field_configs ADD COLUMN min_items INTEGER'); } catch (e) { }
   try { db.exec('ALTER TABLE process_field_configs ADD COLUMN max_items INTEGER'); } catch (e) { }
+
+  // 迁移字段 key 到全局唯一
+  migrateFieldKeysToGlobalUnique();
 
   // 同步默认字段
   try {
@@ -139,6 +143,171 @@ export function updateRecipe(recipeId: string, data: Omit<RecipeData, 'id'>, use
   );
 
   return result.changes > 0;
+}
+
+/**
+ * 迁移字段 key 到全局唯一
+ * 规则：保留第一个出现的 key 不变，其余改为 "{processType}_{key}"
+ */
+function migrateFieldKeysToGlobalUnique() {
+  try {
+    // 检查表结构是否已经是 UNIQUE(key)
+    const tableInfo = db.prepare(`
+      SELECT sql FROM sqlite_master 
+      WHERE type='table' AND name='process_field_configs'
+    `).get() as { sql: string } | undefined;
+    
+    if (tableInfo && tableInfo.sql.includes('UNIQUE(key)') && !tableInfo.sql.includes('UNIQUE(process_type, key)')) {
+      console.log('字段 key 已迁移到全局唯一，跳过迁移');
+      return;
+    }
+
+    console.log('===== 开始迁移字段 key 到全局唯一 =====');
+    
+    // 获取所有字段配置
+    const allFields = db.prepare(`
+      SELECT id, process_type, key 
+      FROM process_field_configs 
+      ORDER BY process_type, id
+    `).all() as Array<{ id: string; process_type: string; key: string }>;
+
+    if (allFields.length === 0) {
+      console.log('没有字段配置，跳过迁移');
+      return;
+    }
+
+    // 按 key 分组，找出重复的
+    const keyGroups = new Map<string, Array<{ id: string; process_type: string; key: string }>>();
+    allFields.forEach(field => {
+      if (!keyGroups.has(field.key)) {
+        keyGroups.set(field.key, []);
+      }
+      keyGroups.get(field.key)!.push(field);
+    });
+
+    // 找出需要重命名的字段（重复的 key）
+    const renameMap = new Map<string, string>(); // fieldId -> newKey
+
+    keyGroups.forEach((fields, key) => {
+      if (fields.length > 1) {
+        // 保留第一个出现的（按 process_type 排序，dissolution 优先）
+        const order = ['dissolution', 'compounding', 'filtration', 'transfer', 'flavorAddition', 'extraction', 'other'];
+        const sorted = fields.sort((a, b) => {
+          const aIdx = order.indexOf(a.process_type);
+          const bIdx = order.indexOf(b.process_type);
+          if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
+          if (aIdx !== -1) return -1;
+          if (bIdx !== -1) return 1;
+          return a.process_type.localeCompare(b.process_type);
+        });
+        
+        // 其余的需要重命名
+        sorted.slice(1).forEach(field => {
+          const newKey = `${field.process_type}_${key}`;
+          renameMap.set(field.id, newKey);
+          console.log(`  迁移: ${field.process_type}.${key} -> ${newKey}`);
+        });
+      }
+    });
+
+    if (renameMap.size === 0) {
+      console.log('没有重复的 key，无需迁移');
+      // 但表结构可能还是旧的，需要重建
+      rebuildTableWithUniqueKey();
+      return;
+    }
+
+    // 执行重命名（需要重建表）
+    console.log(`需要重命名 ${renameMap.size} 个字段`);
+    rebuildTableWithUniqueKey(renameMap);
+
+    console.log('===== 字段 key 迁移完成 =====');
+    console.log(`重命名了 ${renameMap.size} 个字段`);
+    console.log('========================\n');
+  } catch (error: any) {
+    console.error('字段 key 迁移失败:', error);
+    // 不抛出错误，允许继续运行
+  }
+}
+
+/**
+ * 重建表结构，使用 UNIQUE(key) 约束
+ */
+function rebuildTableWithUniqueKey(renameMap?: Map<string, string>) {
+  // 创建临时表（新结构）
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS process_field_configs_new (
+      id TEXT PRIMARY KEY,
+      process_type TEXT NOT NULL,
+      key TEXT NOT NULL UNIQUE,
+      label TEXT NOT NULL,
+      input_type TEXT NOT NULL,
+      unit TEXT,
+      options TEXT,
+      default_value TEXT,
+      validation TEXT,
+      display_condition TEXT,
+      sort_order INTEGER DEFAULT 0,
+      is_system INTEGER DEFAULT 0,
+      enabled INTEGER DEFAULT 1,
+      created_at TEXT,
+      updated_at TEXT,
+      item_config TEXT,
+      item_fields TEXT,
+      fields TEXT,
+      min_items INTEGER,
+      max_items INTEGER
+    )
+  `);
+
+  // 复制数据并重命名（如果需要）
+  const selectOld = db.prepare(`
+    SELECT * FROM process_field_configs
+  `);
+  const insertNew = db.prepare(`
+    INSERT INTO process_field_configs_new (
+      id, process_type, key, label, input_type, unit, options,
+      default_value, validation, display_condition, sort_order,
+      is_system, enabled, created_at, updated_at,
+      item_config, item_fields, fields, min_items, max_items
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const oldRows = selectOld.all() as any[];
+  oldRows.forEach(row => {
+    const newKey = renameMap?.get(row.id) || row.key;
+    insertNew.run(
+      row.id,
+      row.process_type,
+      newKey,
+      row.label,
+      row.input_type,
+      row.unit,
+      row.options,
+      row.default_value,
+      row.validation,
+      row.display_condition,
+      row.sort_order,
+      row.is_system,
+      row.enabled,
+      row.created_at,
+      row.updated_at,
+      row.item_config,
+      row.item_fields,
+      row.fields,
+      row.min_items,
+      row.max_items
+    );
+  });
+
+  // 删除旧表，重命名新表
+  db.exec('DROP TABLE process_field_configs');
+  db.exec('ALTER TABLE process_field_configs_new RENAME TO process_field_configs');
+  
+  // 重建索引
+  db.exec('CREATE INDEX IF NOT EXISTS idx_process_type ON process_field_configs(process_type)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_enabled ON process_field_configs(enabled)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_key ON process_field_configs(key)');
 }
 
 export { db };

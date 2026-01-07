@@ -38,6 +38,11 @@ const PARAM_KEYS: Record<string, string> = {
   [ProcessType.FILTRATION]: 'filtrationParams',
   [ProcessType.TRANSFER]: 'transferParams',
   [ProcessType.FLAVOR_ADDITION]: 'flavorAdditionParams',
+  [ProcessType.EXTRACTION]: 'extractionParams',
+  [ProcessType.CENTRIFUGE]: 'centrifugeParams',
+  [ProcessType.COOLING]: 'coolingParams',
+  [ProcessType.HOLDING]: 'holdingParams',
+  [ProcessType.MEMBRANE_FILTRATION]: 'membraneFiltrationParams',
   [ProcessType.OTHER]: 'params',
 };
 

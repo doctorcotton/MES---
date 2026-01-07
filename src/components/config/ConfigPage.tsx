@@ -44,7 +44,7 @@ export function ConfigPage() {
         removeProcessSegmentTemplate,
         resetToDefaults,
     } = useProcessTypeConfigStore();
-    const { getConfigsByProcessType } = useFieldConfigStore();
+    const { getConfigsByProcessType, getAllConfigsByProcessType } = useFieldConfigStore();
 
     const [editingSubStep, setEditingSubStep] = useState<ProcessType | null>(null);
     const [editingSegment, setEditingSegment] = useState<string | null>(null);
@@ -74,14 +74,15 @@ export function ConfigPage() {
             console.warn(`Template for type ${type} not found`);
             return;
         }
-        const processFields = getConfigsByProcessType(type);
-        const allFields = processFields.map(f => f.key);
+        // 使用 getAllConfigsByProcessType 获取全部字段（含 disabled）
+        const allProcessFields = getAllConfigsByProcessType(type);
+        const allFieldKeys = allProcessFields.map(f => f.key);
         setEditingSubStep(type);
         setEditSubStepValues({
             label: template.label,
             defaultDeviceCode: template.defaultDeviceCode,
             description: template.description,
-            enabledFields: template.enabledFields || allFields, // 默认全部启用
+            enabledFields: template.enabledFields || allFieldKeys, // 默认全部启用
         });
     };
 
@@ -430,12 +431,13 @@ export function ConfigPage() {
                                     选择启用的字段（去除勾选将隐藏该字段）
                                 </div>
                                 <div className="bg-gray-50 p-3 rounded-md space-y-2 max-h-60 overflow-y-auto">
-                                    {getConfigsByProcessType(editingSubStep).map((field, idx) => {
+                                    {getAllConfigsByProcessType(editingSubStep).map((field, idx) => {
                                         const isEnabled = (editSubStepValues.enabledFields || []).includes(field.key);
+                                        const isFieldDisabled = !field.enabled;
                                         return (
                                             <label
                                                 key={idx}
-                                                className="flex items-center justify-between bg-white p-2 rounded border hover:bg-gray-50 cursor-pointer"
+                                                className={`flex items-center justify-between bg-white p-2 rounded border hover:bg-gray-50 cursor-pointer ${isFieldDisabled ? 'opacity-60' : ''}`}
                                             >
                                                 <div className="flex items-center flex-1">
                                                     <input
@@ -454,7 +456,10 @@ export function ConfigPage() {
                                                         }}
                                                     />
                                                     <div className="flex-1">
-                                                        <div className="text-sm font-medium">{field.label}</div>
+                                                        <div className="text-sm font-medium">
+                                                            {field.label}
+                                                            {isFieldDisabled && <span className="ml-2 text-xs text-gray-400">(已禁用)</span>}
+                                                        </div>
                                                         <div className="text-xs text-gray-500">
                                                             类型: {field.inputType}
                                                             {field.unit && ` | 单位: ${field.unit}`}
@@ -472,7 +477,7 @@ export function ConfigPage() {
                                     })}
                                 </div>
                                 <div className="text-xs text-gray-500 mt-2">
-                                    已启用 {(editSubStepValues.enabledFields || []).length} / {getConfigsByProcessType(editingSubStep).length} 个字段
+                                    已启用 {(editSubStepValues.enabledFields || []).length} / {getAllConfigsByProcessType(editingSubStep).length} 个字段
                                 </div>
                             </div>
                         )}

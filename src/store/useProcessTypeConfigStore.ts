@@ -110,6 +110,10 @@ export const useProcessTypeConfigStore = create<ProcessTypeConfigStore>()(
                     ProcessTypes.FLAVOR_ADDITION,
                     ProcessTypes.OTHER,
                     ProcessTypes.EXTRACTION,
+                    ProcessTypes.CENTRIFUGE,
+                    ProcessTypes.COOLING,
+                    ProcessTypes.HOLDING,
+                    ProcessTypes.MEMBRANE_FILTRATION,
                 ];
                 if (baseTypes.includes(type as any)) {
                     return { success: false, error: '系统默认类型不能删除' };

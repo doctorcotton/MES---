@@ -13,6 +13,7 @@ interface FieldConfigState {
     deleteConfig: (id: string) => Promise<void>;
     reorderConfig: (id: string, newOrder: number) => Promise<void>;
     getConfigsByProcessType: (type: ProcessType) => FieldConfig[];
+    getAllConfigsByProcessType: (type: ProcessType) => FieldConfig[];
 }
 
 export const useFieldConfigStore = create<FieldConfigState>((set, get) => ({
@@ -71,6 +72,12 @@ export const useFieldConfigStore = create<FieldConfigState>((set, get) => ({
     getConfigsByProcessType: (type) => {
         return get().configs
             .filter(c => c.processType === type && c.enabled)
+            .sort((a, b) => a.sortOrder - b.sortOrder);
+    },
+    
+    getAllConfigsByProcessType: (type) => {
+        return get().configs
+            .filter(c => c.processType === type)
             .sort((a, b) => a.sortOrder - b.sortOrder);
     }
 }));

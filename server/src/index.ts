@@ -123,6 +123,16 @@ app.post('/api/config/fields', (req, res) => {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
+  // 全局 key 查重
+  const existing = getFieldConfigs().find(c => c.key === config.key);
+  if (existing) {
+    return res.status(409).json({ 
+      error: `字段 key "${config.key}" 已存在（工艺类型: ${existing.processType}）`,
+      duplicateKey: config.key,
+      existingProcessType: existing.processType
+    });
+  }
+
   // 如果缺少 ID 则生成
   if (!config.id) {
     config.id = uuidv4();

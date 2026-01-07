@@ -469,6 +469,12 @@ export function RecipeTable() {
     const process = processes.find(p => p.id === addSubStepProcessId);
     const subStepCount = process?.node.subSteps.length || 0;
     const template = getSubStepTemplate(processType);
+    
+    if (!template) {
+      console.error(`Template for processType ${processType} not found`);
+      alert(`无法创建子步骤：类型 ${processType} 的模板不存在`);
+      return;
+    }
 
     const newSubStep: SubStep = {
       id: `${addSubStepProcessId}-substep-${subStepCount + 1}`,
@@ -566,6 +572,7 @@ export function RecipeTable() {
         [ProcessType.FILTRATION]: 'filtrationParams',
         [ProcessType.TRANSFER]: 'transferParams',
         [ProcessType.FLAVOR_ADDITION]: 'flavorAdditionParams',
+        [ProcessType.EXTRACTION]: 'extractionParams',
       };
 
       if (subStep.processType === ProcessType.OTHER) {

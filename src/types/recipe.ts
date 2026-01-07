@@ -24,6 +24,10 @@ export const ProcessTypes = {
   FLAVOR_ADDITION: 'flavorAddition' as const, // 香精添加
   OTHER: 'other' as const,                    // 其他
   EXTRACTION: 'extraction' as const,          // 萃取
+  CENTRIFUGE: 'centrifuge' as const,          // 离心
+  COOLING: 'cooling' as const,                // 冷却
+  HOLDING: 'holding' as const,                // 暂存
+  MEMBRANE_FILTRATION: 'membraneFiltration' as const, // 膜过滤
 } as const;
 
 /**
@@ -43,6 +47,10 @@ export const BASE_PROCESS_TYPES = [
   ProcessTypes.FLAVOR_ADDITION,
   ProcessTypes.OTHER,
   ProcessTypes.EXTRACTION,
+  ProcessTypes.CENTRIFUGE,
+  ProcessTypes.COOLING,
+  ProcessTypes.HOLDING,
+  ProcessTypes.MEMBRANE_FILTRATION,
 ] as const;
 
 /**
@@ -154,15 +162,77 @@ export interface FlavorAdditionParams {
 }
 
 /**
+ * 茶叶配比项
+ */
+export interface TeaBlendItem {
+  teaCode: string;      // 茶叶代码，如 "PT044"
+  teaName: string;      // 茶叶名称，如 "普洱生茶"
+  ratioPart: number;    // 配比份数，如 4, 9, 2
+}
+
+/**
  * 萃取参数接口
  */
 export interface ExtractionParams {
-  waterTemp: TemperatureRange;           // 水温
-  teaWaterRatio: WaterRatio;            // 茶水比（类似料水比）
-  stirringTime: { value: number; unit: 'min' };  // 搅拌时间
-  stirringFrequency?: string;            // 搅拌频率（可选）
-  coolingTemp?: { max: number; unit: '℃' };     // 冷却温度（≤15°C）
-  settlingTime?: { value: number; unit: 'min' }; // 静置时间（10min）
+  extractWaterVolume?: ConditionValue;   // 萃取水量（L）
+  waterTempRange?: TemperatureRange;     // 水温范围（℃），如 84-86
+  tempMaxLimit?: number;                  // 温度上限（℃），默认 87
+  teaWaterRatio?: WaterRatio;            // 茶水比（1:X），默认 1:50
+  teaBlend?: TeaBlendItem[];             // 茶叶配比数组
+  extractTime?: { value: number; unit: 'min' | 's' };  // 萃取时长
+  stirProgram?: string;                  // 搅拌程序描述
+  referenceRpm?: number;                 // 参考转速（r/min），默认 10
+  pourTimeLimitSec?: number;             // 倾倒时间限制（秒），默认 130
+  openExtraction?: '是' | '否';          // 敞口提取，默认 '是'
+  stirDuringFeeding?: '是' | '否';       // 投料期间开启搅拌，默认 '否'
+  exhaustFanOff?: '是' | '否';          // 投料/萃取/倾倒关闭排气扇，默认 '是'
+}
+
+/**
+ * 离心参数接口
+ */
+export interface CentrifugeParams {
+  inletFilterMesh?: number;              // 入口过滤目数，如 200
+  flowRateRange?: { min: number; max: number; unit: 't/h' };  // 流量范围，默认 5.0-5.5 t/h
+  pressureMin?: ConditionValue;          // 最小压力（Bar），默认 ≥5.0
+  polyphenolsRange?: { min: number; max: number; unit: 'mg/kg' };  // 茶多酚范围，2000-2400
+  brixRange?: { min: number; max: number; unit: 'Brix' };    // Brix范围，0.51-0.61
+  pHRange?: { min: number; max: number; unit: 'pH' };        // pH范围，5.3-5.9
+  turbidityMax?: number;                 // 最大浊度（NTU），默认 15
+  targetFinalPolyphenols?: number;       // 目标最终茶多酚（mg/kg），默认 650
+}
+
+/**
+ * 冷却参数接口
+ */
+export interface CoolingParams {
+  targetTempMax: number;                 // 目标最高温度（℃），默认 15，max=15
+  method?: string;                       // 冷却方式/注意事项（可选）
+}
+
+/**
+ * 暂存参数接口
+ */
+export interface HoldingParams {
+  settlingTime?: number;                 // 静置时间（min），默认 10
+  outletFilterMesh?: number;             // 出口过滤目数，默认 200
+  container?: string;                    // 容器名称，默认 "暂存桶"
+}
+
+/**
+ * 膜过滤参数接口
+ */
+export interface MembraneFiltrationParams {
+  membraneMaterial?: 'PES' | '其他';     // 膜材料，默认 'PES'
+  poreSize?: number;                     // 孔径（μm），默认 0.45
+  polyphenolsRange?: { min: number; max: number; unit: 'mg/kg' };  // 茶多酚范围，2000-2400
+  brixRange?: { min: number; max: number; unit: 'Brix' };    // Brix范围，0.50-0.60
+  pHRange?: { min: number; max: number; unit: 'pH' };        // pH范围，5.3-5.9
+  turbidityMax?: number;                 // 最大浊度（NTU），默认 5
+  endDeltaP?: number;                    // 终点压差（MPa），默认 0.3
+  maxInletPressure?: number;             // 最大进口压力（MPa），默认 0.6
+  firstBatchFlushRequired?: '是' | '否'; // 首桶赶水要求，默认 '是'
+  flushNote?: string;                    // 赶水说明/仪器校准说明
 }
 
 /**
@@ -175,6 +245,10 @@ export type ProcessNodeData =
   | ({ processType: typeof ProcessTypes.TRANSFER } & { transferParams: TransferParams })
   | ({ processType: typeof ProcessTypes.FLAVOR_ADDITION } & { flavorAdditionParams: FlavorAdditionParams })
   | ({ processType: typeof ProcessTypes.EXTRACTION } & { extractionParams: ExtractionParams })
+  | ({ processType: typeof ProcessTypes.CENTRIFUGE } & { centrifugeParams: CentrifugeParams })
+  | ({ processType: typeof ProcessTypes.COOLING } & { coolingParams: CoolingParams })
+  | ({ processType: typeof ProcessTypes.HOLDING } & { holdingParams: HoldingParams })
+  | ({ processType: typeof ProcessTypes.MEMBRANE_FILTRATION } & { membraneFiltrationParams: MembraneFiltrationParams })
   | ({ processType: typeof ProcessTypes.OTHER } & { params: string })
   | ({ processType: string } & { [key: string]: any }); // 支持动态扩展类型
 
@@ -302,6 +376,22 @@ export function isFlavorAdditionNode(node: RecipeNode): node is RecipeNode & { d
 
 export function isExtractionNode(node: RecipeNode): node is RecipeNode & { data: { processType: typeof ProcessTypes.EXTRACTION; extractionParams: ExtractionParams } } {
   return node.data.processType === ProcessTypes.EXTRACTION;
+}
+
+export function isCentrifugeNode(node: RecipeNode): node is RecipeNode & { data: { processType: typeof ProcessTypes.CENTRIFUGE; centrifugeParams: CentrifugeParams } } {
+  return node.data.processType === ProcessTypes.CENTRIFUGE;
+}
+
+export function isCoolingNode(node: RecipeNode): node is RecipeNode & { data: { processType: typeof ProcessTypes.COOLING; coolingParams: CoolingParams } } {
+  return node.data.processType === ProcessTypes.COOLING;
+}
+
+export function isHoldingNode(node: RecipeNode): node is RecipeNode & { data: { processType: typeof ProcessTypes.HOLDING; holdingParams: HoldingParams } } {
+  return node.data.processType === ProcessTypes.HOLDING;
+}
+
+export function isMembraneFiltrationNode(node: RecipeNode): node is RecipeNode & { data: { processType: typeof ProcessTypes.MEMBRANE_FILTRATION; membraneFiltrationParams: MembraneFiltrationParams } } {
+  return node.data.processType === ProcessTypes.MEMBRANE_FILTRATION;
 }
 
 /**

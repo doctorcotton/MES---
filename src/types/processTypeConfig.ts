@@ -91,7 +91,7 @@ export const PROCESS_TYPE_FIELDS: Partial<Record<ProcessType, SubStepFieldConfig
     ],
     [ProcessType.COMPOUNDING]: [
         { key: 'stirringSpeed', label: '搅拌速度', inputType: 'conditionValue', unit: '%', required: true },
-        { key: 'stirringTime', label: '搅拌时间', inputType: 'number', unit: 'min', required: true, defaultValue: { value: 5, unit: 'min' } },
+        { key: 'compounding_stirringTime', label: '搅拌时间', inputType: 'number', unit: 'min', required: true, defaultValue: { value: 5, unit: 'min' } },
         { key: 'finalTemp', label: '最终温度', inputType: 'number', unit: '℃', required: true },
     ],
     [ProcessType.FILTRATION]: [
@@ -99,13 +99,13 @@ export const PROCESS_TYPE_FIELDS: Partial<Record<ProcessType, SubStepFieldConfig
     ],
     [ProcessType.TRANSFER]: [
         {
-            key: 'transferType', label: '赶料类型', inputType: 'select', options: [
+            key: 'transfer_transferType', label: '赶料类型', inputType: 'select', options: [
                 { value: 'material', label: '料赶料' },
                 { value: 'water', label: '水赶料' },
                 { value: 'none', label: '无' },
             ], required: true
         },
-        { key: 'waterVolume', label: '水量', inputType: 'number', unit: 'L' },
+        { key: 'transfer_waterVolume', label: '水量', inputType: 'number', unit: 'L' },
         { key: 'cleaning', label: '清洗要求', inputType: 'text' },
     ],
     [ProcessType.FLAVOR_ADDITION]: [
@@ -157,7 +157,7 @@ export const DEFAULT_COMPOUNDING_TEMPLATE: SubStepTemplate = {
         compoundingParams: {
             additives: [],
             stirringSpeed: { value: 90, unit: '%', condition: '>=' },
-            stirringTime: { value: 10, unit: 'min' },
+            compounding_stirringTime: { value: 10, unit: 'min' },
             finalTemp: { max: 30, unit: '℃' },
         },
     },
@@ -188,7 +188,7 @@ export const DEFAULT_TRANSFER_TEMPLATE: SubStepTemplate = {
     defaultParams: {
         processType: ProcessType.TRANSFER,
         transferParams: {
-            transferType: 'material',
+            transfer_transferType: 'material',
         },
     },
     description: '物料转移',
@@ -231,13 +231,94 @@ export const DEFAULT_EXTRACTION_TEMPLATE: SubStepTemplate = {
     defaultParams: {
         processType: ProcessType.EXTRACTION,
         extractionParams: {
-            waterTemp: { unit: '℃' },
-            teaWaterRatio: { min: 5, max: 8 },
-            stirringTime: { value: 10, unit: 'min' },
-            stirringFrequency: '详见操作步骤',
+            waterTempRange: { min: 84, max: 86, unit: '℃' },
+            tempMaxLimit: 87,
+            teaWaterRatio: { min: 50, max: 50 },
+            referenceRpm: 10,
+            pourTimeLimitSec: 130,
+            openExtraction: '是',
+            stirDuringFeeding: '否',
+            exhaustFanOff: '是',
         },
     },
     description: '茶叶泡制萃取',
+};
+
+export const DEFAULT_CENTRIFUGE_TEMPLATE: SubStepTemplate = {
+    type: ProcessType.CENTRIFUGE,
+    version: 1,
+    label: '离心',
+    defaultDeviceCode: '离心机',
+    defaultDeviceType: DeviceType.OTHER,
+    defaultParams: {
+        processType: ProcessType.CENTRIFUGE,
+        centrifugeParams: {
+            inletFilterMesh: 200,
+            flowRateRange: { min: 5.0, max: 5.5, unit: 't/h' },
+            pressureMin: { value: 5.0, unit: 'Bar', condition: '>=' },
+            polyphenolsRange: { min: 2000, max: 2400, unit: 'mg/kg' },
+            brixRange: { min: 0.51, max: 0.61, unit: 'Brix' },
+            pHRange: { min: 5.3, max: 5.9, unit: 'pH' },
+            turbidityMax: 15,
+            targetFinalPolyphenols: 650,
+        },
+    },
+    description: '离心分离处理',
+};
+
+export const DEFAULT_COOLING_TEMPLATE: SubStepTemplate = {
+    type: ProcessType.COOLING,
+    version: 1,
+    label: '冷却',
+    defaultDeviceCode: '冷却设备',
+    defaultDeviceType: DeviceType.OTHER,
+    defaultParams: {
+        processType: ProcessType.COOLING,
+        coolingParams: {
+            targetTempMax: 15,
+        },
+    },
+    description: '降温至目标温度',
+};
+
+export const DEFAULT_HOLDING_TEMPLATE: SubStepTemplate = {
+    type: ProcessType.HOLDING,
+    version: 1,
+    label: '暂存',
+    defaultDeviceCode: '暂存桶',
+    defaultDeviceType: DeviceType.OTHER,
+    defaultParams: {
+        processType: ProcessType.HOLDING,
+        holdingParams: {
+            settlingTime: 10,
+            outletFilterMesh: 200,
+            container: '暂存桶',
+        },
+    },
+    description: '暂存静置处理',
+};
+
+export const DEFAULT_MEMBRANE_FILTRATION_TEMPLATE: SubStepTemplate = {
+    type: ProcessType.MEMBRANE_FILTRATION,
+    version: 1,
+    label: '膜过滤',
+    defaultDeviceCode: '膜过滤设备',
+    defaultDeviceType: DeviceType.FILTER,
+    defaultParams: {
+        processType: ProcessType.MEMBRANE_FILTRATION,
+        membraneFiltrationParams: {
+            membraneMaterial: 'PES',
+            poreSize: 0.45,
+            polyphenolsRange: { min: 2000, max: 2400, unit: 'mg/kg' },
+            brixRange: { min: 0.50, max: 0.60, unit: 'Brix' },
+            pHRange: { min: 5.3, max: 5.9, unit: 'pH' },
+            turbidityMax: 5,
+            endDeltaP: 0.3,
+            maxInletPressure: 0.6,
+            firstBatchFlushRequired: '是',
+        },
+    },
+    description: '膜过滤处理',
 };
 
 /**
@@ -251,6 +332,10 @@ export const DEFAULT_SUBSTEP_TEMPLATES: Partial<Record<ProcessType, SubStepTempl
     [ProcessType.FLAVOR_ADDITION]: DEFAULT_FLAVOR_ADDITION_TEMPLATE,
     [ProcessType.OTHER]: DEFAULT_OTHER_TEMPLATE,
     [ProcessType.EXTRACTION]: DEFAULT_EXTRACTION_TEMPLATE,
+    [ProcessType.CENTRIFUGE]: DEFAULT_CENTRIFUGE_TEMPLATE,
+    [ProcessType.COOLING]: DEFAULT_COOLING_TEMPLATE,
+    [ProcessType.HOLDING]: DEFAULT_HOLDING_TEMPLATE,
+    [ProcessType.MEMBRANE_FILTRATION]: DEFAULT_MEMBRANE_FILTRATION_TEMPLATE,
 };
 
 /**
@@ -300,6 +385,10 @@ export function getProcessTypeName(type: ProcessType): string {
         [ProcessType.FLAVOR_ADDITION]: '香精添加',
         [ProcessType.OTHER]: '其他',
         [ProcessType.EXTRACTION]: '萃取',
+        [ProcessType.CENTRIFUGE]: '离心',
+        [ProcessType.COOLING]: '冷却',
+        [ProcessType.HOLDING]: '暂存',
+        [ProcessType.MEMBRANE_FILTRATION]: '膜过滤',
     };
     
     // 如果存在默认名称，直接返回
