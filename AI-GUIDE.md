@@ -2,6 +2,30 @@
 
 > 给 AI 助手和开发者的快速技术导航指南
 
+## 📌 重要更新（2026-01）
+
+### 布局算法架构重构
+- ✅ **新架构**：从 Dagre 库迁移到自研的**工艺段识别 + 分段布局**算法
+- ✅ **核心文件**：
+  - `LayoutController.tsx` - Headless 布局控制器（替代 `useAutoLayout.ts`）
+  - `segmentIdentifier.ts` - DFS 工艺段识别算法
+  - `segmentLayoutCalculator.ts` - 分段布局计算器
+- ✅ **新特性**：
+  - 固定连线长度（120px）
+  - 汇聚点智能居中（加权质心算法）
+  - 调试模式可视化（连线长度标注、误差高亮）
+- 📖 **详细文档**：参考 `AUTO_LAYOUT_ALGORITHM.md`
+
+### 动态字段配置系统
+- ✅ **数据库驱动**：字段定义存储在 SQLite，前端动态渲染
+- ✅ **核心组件**：
+  - `DynamicFormRenderer` - 动态表单渲染引擎
+  - `FieldConfigEditor` - 字段配置编辑器
+  - `useFieldConfigStore` - 字段配置状态管理
+- ✅ **支持类型**：Text, Number, Select, Array, Object, Range 等
+
+---
+
 ## 1. 功能-文件映射表（核心）
 
 | 功能分类 | 文件路径 | 关键标识 |
@@ -16,6 +40,9 @@
 | 图视图 | `src/components/graph/RecipeFlow.tsx` | `RecipeFlow` 组件 |
 | 自定义节点 | `src/components/graph/CustomNode.tsx` | `CustomNode` 组件 |
 | 自定义连线 | `src/components/graph/SequenceEdge.tsx` | `SequenceEdge` 组件 |
+| 布局控制器 | `src/components/graph/LayoutController.tsx` | `LayoutController` - Headless 布局组件 |
+| 调试叠加层 | `src/components/graph/DebugOverlay.tsx` | 调试模式可视化 |
+| 调试统计面板 | `src/components/graph/DebugStatsPanel.tsx` | 布局统计信息 |
 | **布局组件** | | |
 | 应用布局 | `src/components/layout/AppLayout.tsx` | `AppLayout` 组件 |
 | **协作组件** | | |
@@ -38,7 +65,8 @@
 | 工艺类型配置 | `src/store/useProcessTypeConfigStore.ts` | `useProcessTypeConfigStore` - 子步骤和工艺段模板 |
 | 字段配置 | `src/store/useFieldConfigStore.ts` | `useFieldConfigStore` - 动态字段定义管理 |
 | **Hooks** | | |
-| 自动布局 | `src/hooks/useAutoLayout.ts` | `useAutoLayout` - Dagre 布局算法 |
+| 工艺段识别 | `src/hooks/segmentIdentifier.ts` | `identifyProcessSegments` - DFS 算法识别并行/串行段 |
+| 分段布局计算 | `src/hooks/segmentLayoutCalculator.ts` | `layoutParallelSegments`, `layoutSerialSegments` - 布局算法 |
 | 实时同步 | `src/hooks/useSocketSync.ts` | `useSocketSync` - WebSocket 同步 |
 | 编辑锁 | `src/hooks/useEditLock.ts` | `useEditLock` - 编辑权限管理 |
 | 自动保存 | `src/hooks/useAutoSave.ts` | `useAutoSave` - 定期保存 |
@@ -59,11 +87,15 @@
 | 操作类型 | `src/types/operation.ts` | 操作相关类型定义 |
 | 调度结果 | `src/types/scheduling.ts` | `ScheduleResult` - 包含时间线、设备状态、总耗时、警告等信息 |
 | 工艺类型配置 | `src/types/processTypeConfig.ts` | `SubStepTemplate`, `ProcessSegmentTemplate` |
+| 字段配置类型 | `src/types/fieldConfig.ts` | `FieldConfig` - 动态字段配置类型定义 |
 | **初始数据** | | |
 | 初始数据 | `src/data/initialData.ts` | `initialNodes`, `initialEdges` |
 | 设备池 | `src/data/devicePool.ts` | `defaultDevicePool` - 默认设备资源池 |
 | **工具函数** | | |
 | 迁移工具 | `src/utils/migration.ts` | 数据迁移工具 |
+| 字段提取器 | `src/utils/fieldExtractor.ts` | 从配方数据中提取字段定义 |
+| 字段验证器 | `src/utils/fieldValidator.ts` | 字段验证逻辑 |
+| 字段同步工具 | `src/utils/syncFieldsFromRecipes.ts` | 从配方同步字段到数据库 |
 | **后端** | | |
 | 服务器入口 | `server/src/index.ts` | Express + Socket.IO 服务器 |
 | 数据库 | `server/src/db.ts` | SQLite 数据库操作 |
@@ -77,18 +109,19 @@
 src/
 ├── components/        # React 组件
 │   ├── editor/       # 编辑器组件（表格、连接管理、对话框）
-│   ├── graph/        # 流程图组件（节点、连线、视图）
+│   ├── graph/        # 流程图组件（节点、连线、视图、布局控制器）
 │   ├── collab/       # 协作功能组件（编辑锁、在线用户等）
 │   ├── layout/       # 布局组件（应用主布局）
-│   ├── config/       # 配置页面组件（工艺类型配置）
+│   ├── config/       # 配置页面组件（工艺类型配置、字段配置）
 │   ├── scheduling/   # 调度相关组件（甘特图、设备状态）
+│   ├── common/       # 通用组件（动态表单渲染器、字段组件）
 │   └── ui/           # Shadcn UI 基础组件
-├── hooks/            # 自定义 Hooks（布局、同步、锁等）
+├── hooks/            # 自定义 Hooks（工艺段识别、布局计算、同步、锁等）
 ├── store/            # Zustand 状态管理
-├── services/         # 服务层（WebSocket、调度器、工厂配置）
+├── services/         # 服务层（WebSocket、调度器、工厂配置、字段配置）
 ├── types/            # TypeScript 类型定义
 ├── data/             # 初始数据（配方、设备池）
-├── utils/            # 工具函数（迁移工具等）
+├── utils/            # 工具函数（迁移、字段提取、验证等）
 └── router.tsx        # React Router 路由配置
 
 server/
@@ -113,7 +146,12 @@ server/
 
 - **自定义节点**：`CustomNode` - 显示工艺步骤信息（ID、名称、设备、原料、参数）
 - **自定义连线**：`SequenceEdge` - 带序号标识的连线（显示投料顺序）
-- **自动布局**：使用 Dagre 算法，方向 Top-to-Bottom
+- **自动布局**：采用**工艺段识别 + 分段布局**策略，固定连线长度 120px
+  - 工艺段识别：使用 DFS 算法识别并行段和串行段
+  - 并行段布局：所有分支起点对齐，段内连线长度统一
+  - 汇聚点居中：基于子树规模的加权质心算法
+  - 串行段布局：从汇聚点垂直向下，连线长度统一
+- **调试模式**：可视化显示连线长度和误差，快速定位布局问题
 
 ### WebSocket 实时同步
 
@@ -160,8 +198,10 @@ server/
 ```mermaid
 graph LR
     RecipeTable[RecipeTable<br/>表格编辑] -->|更新数据| RecipeStore[useRecipeStore<br/>配方状态]
-    RecipeStore -->|触发布局| AutoLayout[useAutoLayout<br/>Dagre算法]
-    AutoLayout -->|计算位置| RecipeFlow[RecipeFlow<br/>流程图]
+    RecipeStore -->|触发布局| LayoutCtrl[LayoutController<br/>布局控制器]
+    LayoutCtrl -->|识别工艺段| SegmentID[segmentIdentifier<br/>DFS算法]
+    SegmentID -->|计算布局| SegmentCalc[segmentLayoutCalculator<br/>分段布局]
+    SegmentCalc -->|更新位置| RecipeFlow[RecipeFlow<br/>流程图]
     RecipeStore -->|变更同步| SocketService[socketService<br/>WebSocket]
     SocketService <-->|实时通信| Server[后端服务器<br/>Socket.IO]
     SocketService -->|接收更新| RecipeStore
@@ -212,16 +252,25 @@ graph LR
 ## 6. 常见任务速查
 
 ### 修改自动布局算法
-- 文件：`src/hooks/useAutoLayout.ts`
-- 配置：`LAYOUT_CONFIG` 对象（节点尺寸、间距、居中策略）
-- 算法：Dagre 库，方向 `TB`（Top-to-Bottom）
+- **主控制器**：`src/components/graph/LayoutController.tsx` - 布局流程控制、节点尺寸收集、坐标转换
+- **工艺段识别**：`src/hooks/segmentIdentifier.ts` - DFS 算法识别并行段和串行段
+- **分段布局计算**：`src/hooks/segmentLayoutCalculator.ts` - 并行段、串行段、汇聚点的布局算法
+- **配置参数**：
+  - `TARGET_EDGE_LENGTH`: 120 (目标连线长度)
+  - `PROCESS_LANE_WIDTH`: 300 (工艺段车道宽度)
+  - `LANE_GAP`: 64 (车道间隙)
+  - `START_X`: 150 (起始X偏移)
+- **调试工具**：
+  - `DebugOverlay.tsx` - 可视化连线长度和误差
+  - `DebugStatsPanel.tsx` - 布局统计信息
+- **详细文档**：参考 `AUTO_LAYOUT_ALGORITHM.md` 了解完整算法原理
 
 ### 添加新工艺类型
 1. 在 `src/types/recipe.ts` 添加新的 `ProcessType` 枚举值
 2. 定义对应的参数接口（如 `NewTypeParams`）
 3. 在 `ProcessNodeData` 联合类型中添加新分支
 4. 在 `CustomNode.tsx` 中添加渲染逻辑
-5. 在 `useAutoLayout.ts` 的 `estimateNodeHeight` 中添加高度估算
+5. 节点高度由 React Flow 自动测量，无需手动配置
 
 ### 修改节点样式
 - 文件：`src/components/graph/CustomNode.tsx`
@@ -250,6 +299,31 @@ graph LR
 - 配置级别：`ConfigurationLevel` - RECIPE（研发视图）、PRODUCTION_LINE（生产视图）
 - 设备池：`src/data/devicePool.ts` - 定义默认设备资源
 
+### 使用调试模式
+- **启用方式**：
+  - 点击流程图右上角的调试按钮
+  - 或在控制台执行：`localStorage.setItem('debug_layout', 'true')`
+- **显示内容**：
+  - 连线长度标注（实际长度 + 误差）
+  - 颜色编码：绿色（<5px）、黄色（5-10px）、红色（>10px）
+  - 悬停显示详细信息
+- **组件位置**：
+  - `DebugOverlay.tsx` - 调试叠加层
+  - `DebugStatsPanel.tsx` - 统计面板
+
+### 配置动态字段
+- **访问配置页面**：浏览器访问 `/config`，切换到"字段配置"标签
+- **字段类型**：Text, Number, Select, Array, Object, Range 等
+- **配置项**：
+  - 字段类型、标签、默认值
+  - 验证规则（必填、最小值、最大值等）
+  - 条件显示规则
+- **核心文件**：
+  - `FieldConfigEditor.tsx` - 配置编辑器
+  - `DynamicFormRenderer.tsx` - 表单渲染引擎
+  - `useFieldConfigStore.ts` - 状态管理
+
 ---
 
 **提示**：详细的使用说明请参考 `README.md`，本文档专注于技术导航。
+完整的布局算法文档请参考 `AUTO_LAYOUT_ALGORITHM.md`。

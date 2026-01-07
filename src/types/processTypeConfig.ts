@@ -60,8 +60,9 @@ export interface SubStepFieldConfig {
 
 /**
  * 工艺类型字段配置
+ * 注意：改为 Partial Record 以支持动态类型
  */
-export const PROCESS_TYPE_FIELDS: Record<ProcessType, SubStepFieldConfig[]> = {
+export const PROCESS_TYPE_FIELDS: Partial<Record<ProcessType, SubStepFieldConfig[]>> = {
     [ProcessType.DISSOLUTION]: [
         {
             key: 'waterVolumeMode', label: '水量模式', inputType: 'select', options: [
@@ -112,6 +113,14 @@ export const PROCESS_TYPE_FIELDS: Record<ProcessType, SubStepFieldConfig[]> = {
     ],
     [ProcessType.OTHER]: [
         { key: 'params', label: '参数描述', inputType: 'text' },
+    ],
+    [ProcessType.EXTRACTION]: [
+        { key: 'waterTemp', label: '水温', inputType: 'range', unit: '℃', required: true },
+        { key: 'teaWaterRatio', label: '茶水比', inputType: 'waterRatio', unit: '(1:X)', required: true, defaultValue: { min: 5, max: 8 } },
+        { key: 'stirringTime', label: '搅拌时间', inputType: 'number', unit: 'min', required: true, defaultValue: { value: 10, unit: 'min' } },
+        { key: 'stirringFrequency', label: '搅拌频率', inputType: 'text' },
+        { key: 'coolingTemp', label: '冷却温度', inputType: 'number', unit: '℃' },
+        { key: 'settlingTime', label: '静置时间', inputType: 'number', unit: 'min' },
     ],
 };
 
@@ -213,16 +222,35 @@ export const DEFAULT_OTHER_TEMPLATE: SubStepTemplate = {
     description: '其他工艺步骤',
 };
 
+export const DEFAULT_EXTRACTION_TEMPLATE: SubStepTemplate = {
+    type: ProcessType.EXTRACTION,
+    version: 1,
+    label: '萃取',
+    defaultDeviceCode: '萃茶釜',
+    defaultDeviceType: DeviceType.OTHER,
+    defaultParams: {
+        processType: ProcessType.EXTRACTION,
+        extractionParams: {
+            waterTemp: { unit: '℃' },
+            teaWaterRatio: { min: 5, max: 8 },
+            stirringTime: { value: 10, unit: 'min' },
+            stirringFrequency: '详见操作步骤',
+        },
+    },
+    description: '茶叶泡制萃取',
+};
+
 /**
  * 默认子步骤模板集合
  */
-export const DEFAULT_SUBSTEP_TEMPLATES: Record<ProcessType, SubStepTemplate> = {
+export const DEFAULT_SUBSTEP_TEMPLATES: Partial<Record<ProcessType, SubStepTemplate>> = {
     [ProcessType.DISSOLUTION]: DEFAULT_DISSOLUTION_TEMPLATE,
     [ProcessType.COMPOUNDING]: DEFAULT_COMPOUNDING_TEMPLATE,
     [ProcessType.FILTRATION]: DEFAULT_FILTRATION_TEMPLATE,
     [ProcessType.TRANSFER]: DEFAULT_TRANSFER_TEMPLATE,
     [ProcessType.FLAVOR_ADDITION]: DEFAULT_FLAVOR_ADDITION_TEMPLATE,
     [ProcessType.OTHER]: DEFAULT_OTHER_TEMPLATE,
+    [ProcessType.EXTRACTION]: DEFAULT_EXTRACTION_TEMPLATE,
 };
 
 /**
@@ -261,15 +289,35 @@ export const DEFAULT_PROCESS_SEGMENT_TEMPLATES: ProcessSegmentTemplate[] = [
 
 /**
  * 获取工艺类型的中文名称
+ * 支持动态类型，从 store 中获取自定义类型名称
  */
 export function getProcessTypeName(type: ProcessType): string {
-    const names: Record<ProcessType, string> = {
+    const defaultNames: Partial<Record<ProcessType, string>> = {
         [ProcessType.DISSOLUTION]: '溶解',
         [ProcessType.COMPOUNDING]: '调配',
         [ProcessType.FILTRATION]: '过滤',
         [ProcessType.TRANSFER]: '赶料',
         [ProcessType.FLAVOR_ADDITION]: '香精添加',
         [ProcessType.OTHER]: '其他',
+        [ProcessType.EXTRACTION]: '萃取',
     };
-    return names[type];
+    
+    // 如果存在默认名称，直接返回
+    if (defaultNames[type]) {
+        return defaultNames[type]!;
+    }
+    
+    // 尝试从 store 中获取自定义名称（需要动态导入以避免循环依赖）
+    try {
+        const { useProcessTypeConfigStore } = require('../store/useProcessTypeConfigStore');
+        const customName = useProcessTypeConfigStore.getState().customTypeNames[type];
+        if (customName) {
+            return customName;
+        }
+    } catch (error) {
+        // Store 可能还未初始化，忽略错误
+    }
+    
+    // 如果都没有，返回类型值本身
+    return type;
 }

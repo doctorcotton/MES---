@@ -7,16 +7,43 @@ import { DeviceRequirement } from './scheduling';
 type RecipeNode = any;
 
 /**
- * 工艺类型枚举
+ * 工艺类型（可扩展的字符串类型）
+ * 支持运行时动态扩展，基础类型作为常量保留
  */
-export enum ProcessType {
-  DISSOLUTION = 'dissolution',        // 溶解
-  COMPOUNDING = 'compounding',       // 调配
-  FILTRATION = 'filtration',         // 过滤
-  TRANSFER = 'transfer',             // 赶料
-  FLAVOR_ADDITION = 'flavorAddition', // 香精添加
-  OTHER = 'other'                    // 其他
-}
+export type ProcessType = string;
+
+/**
+ * 基础工艺类型常量（向后兼容）
+ * 使用 ProcessTypes 访问常量值，ProcessType 作为类型使用
+ */
+export const ProcessTypes = {
+  DISSOLUTION: 'dissolution' as const,        // 溶解
+  COMPOUNDING: 'compounding' as const,       // 调配
+  FILTRATION: 'filtration' as const,         // 过滤
+  TRANSFER: 'transfer' as const,             // 赶料
+  FLAVOR_ADDITION: 'flavorAddition' as const, // 香精添加
+  OTHER: 'other' as const,                    // 其他
+  EXTRACTION: 'extraction' as const,          // 萃取
+} as const;
+
+/**
+ * 为了向后兼容，保留 ProcessType 作为命名空间访问常量
+ * 注意：ProcessType 是类型，ProcessType.XXX 访问常量（通过类型断言）
+ */
+export const ProcessType = ProcessTypes;
+
+/**
+ * 基础工艺类型集合（用于类型检查）
+ */
+export const BASE_PROCESS_TYPES = [
+  ProcessTypes.DISSOLUTION,
+  ProcessTypes.COMPOUNDING,
+  ProcessTypes.FILTRATION,
+  ProcessTypes.TRANSFER,
+  ProcessTypes.FLAVOR_ADDITION,
+  ProcessTypes.OTHER,
+  ProcessTypes.EXTRACTION,
+] as const;
 
 /**
  * 数值条件类型
@@ -127,15 +154,29 @@ export interface FlavorAdditionParams {
 }
 
 /**
+ * 萃取参数接口
+ */
+export interface ExtractionParams {
+  waterTemp: TemperatureRange;           // 水温
+  teaWaterRatio: WaterRatio;            // 茶水比（类似料水比）
+  stirringTime: { value: number; unit: 'min' };  // 搅拌时间
+  stirringFrequency?: string;            // 搅拌频率（可选）
+  coolingTemp?: { max: number; unit: '℃' };     // 冷却温度（≤15°C）
+  settlingTime?: { value: number; unit: 'min' }; // 静置时间（10min）
+}
+
+/**
  * 可辨识联合类型 - 工艺节点数据
  */
 export type ProcessNodeData =
-  | ({ processType: ProcessType.DISSOLUTION } & { dissolutionParams: DissolutionParams })
-  | ({ processType: ProcessType.COMPOUNDING } & { compoundingParams: CompoundingParams })
-  | ({ processType: ProcessType.FILTRATION } & { filtrationParams: FiltrationParams })
-  | ({ processType: ProcessType.TRANSFER } & { transferParams: TransferParams })
-  | ({ processType: ProcessType.FLAVOR_ADDITION } & { flavorAdditionParams: FlavorAdditionParams })
-  | ({ processType: ProcessType.OTHER } & { params: string });
+  | ({ processType: typeof ProcessTypes.DISSOLUTION } & { dissolutionParams: DissolutionParams })
+  | ({ processType: typeof ProcessTypes.COMPOUNDING } & { compoundingParams: CompoundingParams })
+  | ({ processType: typeof ProcessTypes.FILTRATION } & { filtrationParams: FiltrationParams })
+  | ({ processType: typeof ProcessTypes.TRANSFER } & { transferParams: TransferParams })
+  | ({ processType: typeof ProcessTypes.FLAVOR_ADDITION } & { flavorAdditionParams: FlavorAdditionParams })
+  | ({ processType: typeof ProcessTypes.EXTRACTION } & { extractionParams: ExtractionParams })
+  | ({ processType: typeof ProcessTypes.OTHER } & { params: string })
+  | ({ processType: string } & { [key: string]: any }); // 支持动态扩展类型
 
 /**
  * 子步骤定义（用于合并步骤内的子步骤序列）
@@ -239,24 +280,28 @@ export interface FlowNode {
 /**
  * 类型守卫函数
  */
-export function isDissolutionNode(node: RecipeNode): node is RecipeNode & { data: { processType: ProcessType.DISSOLUTION; dissolutionParams: DissolutionParams } } {
-  return node.data.processType === ProcessType.DISSOLUTION;
+export function isDissolutionNode(node: RecipeNode): node is RecipeNode & { data: { processType: typeof ProcessTypes.DISSOLUTION; dissolutionParams: DissolutionParams } } {
+  return node.data.processType === ProcessTypes.DISSOLUTION;
 }
 
-export function isCompoundingNode(node: RecipeNode): node is RecipeNode & { data: { processType: ProcessType.COMPOUNDING; compoundingParams: CompoundingParams } } {
-  return node.data.processType === ProcessType.COMPOUNDING;
+export function isCompoundingNode(node: RecipeNode): node is RecipeNode & { data: { processType: typeof ProcessTypes.COMPOUNDING; compoundingParams: CompoundingParams } } {
+  return node.data.processType === ProcessTypes.COMPOUNDING;
 }
 
-export function isFiltrationNode(node: RecipeNode): node is RecipeNode & { data: { processType: ProcessType.FILTRATION; filtrationParams: FiltrationParams } } {
-  return node.data.processType === ProcessType.FILTRATION;
+export function isFiltrationNode(node: RecipeNode): node is RecipeNode & { data: { processType: typeof ProcessTypes.FILTRATION; filtrationParams: FiltrationParams } } {
+  return node.data.processType === ProcessTypes.FILTRATION;
 }
 
-export function isTransferNode(node: RecipeNode): node is RecipeNode & { data: { processType: ProcessType.TRANSFER; transferParams: TransferParams } } {
-  return node.data.processType === ProcessType.TRANSFER;
+export function isTransferNode(node: RecipeNode): node is RecipeNode & { data: { processType: typeof ProcessTypes.TRANSFER; transferParams: TransferParams } } {
+  return node.data.processType === ProcessTypes.TRANSFER;
 }
 
-export function isFlavorAdditionNode(node: RecipeNode): node is RecipeNode & { data: { processType: ProcessType.FLAVOR_ADDITION; flavorAdditionParams: FlavorAdditionParams } } {
-  return node.data.processType === ProcessType.FLAVOR_ADDITION;
+export function isFlavorAdditionNode(node: RecipeNode): node is RecipeNode & { data: { processType: typeof ProcessTypes.FLAVOR_ADDITION; flavorAdditionParams: FlavorAdditionParams } } {
+  return node.data.processType === ProcessTypes.FLAVOR_ADDITION;
+}
+
+export function isExtractionNode(node: RecipeNode): node is RecipeNode & { data: { processType: typeof ProcessTypes.EXTRACTION; extractionParams: ExtractionParams } } {
+  return node.data.processType === ProcessTypes.EXTRACTION;
 }
 
 /**

@@ -162,47 +162,188 @@ sequenceDiagram
 3. **并行工艺段**：从起点到汇聚点之间的路径
 4. **串行工艺段**：汇聚点之后的连续节点序列
 
-#### 代码实现
+#### 完整实现代码
 
 ```typescript
-// 核心识别逻辑
 export function identifyProcessSegments(
   nodes: FlowNode[],
   edges: RecipeEdge[]
 ): SegmentIdentificationResult {
   // 1. 构建图结构（邻接表）
+  const nodeMap = new Map<string, FlowNode>();
+  nodes.forEach(node => nodeMap.set(node.id, node));
+
   const outgoingEdges = new Map<string, RecipeEdge[]>();
   const incomingEdges = new Map<string, RecipeEdge[]>();
-  
+
+  edges.forEach(edge => {
+    if (!outgoingEdges.has(edge.source)) {
+      outgoingEdges.set(edge.source, []);
+    }
+    outgoingEdges.get(edge.source)!.push(edge);
+
+    if (!incomingEdges.has(edge.target)) {
+      incomingEdges.set(edge.target, []);
+    }
+    incomingEdges.get(edge.target)!.push(edge);
+  });
+
   // 2. 找到所有起点节点（入度为0）
   const startNodes = nodes.filter(node => {
     const incoming = incomingEdges.get(node.id) || [];
     return incoming.length === 0;
   });
-  
-  // 3. 找到汇聚点（入度 > 1）
+
+  // 3. 找到汇聚点（入度 > 1 的节点）
   const convergenceNodes = nodes.filter(node => {
     const incoming = incomingEdges.get(node.id) || [];
     return incoming.length > 1;
   });
-  
-  // 4. 从每个起点DFS，构建并行工艺段
+
+  // 如果只有一个汇聚点，使用它；否则选择第一个
+  const convergenceNode = convergenceNodes.length > 0 ? convergenceNodes[0] : null;
+
+  // 4. 从每个起点开始DFS，构建并行工艺段
   const parallelSegments: ProcessSegment[] = [];
+  const visited = new Set<string>();
+
   startNodes.forEach((startNode, index) => {
+    if (visited.has(startNode.id)) return;
+
     const segmentNodes: FlowNode[] = [];
+    const segmentNodeIds = new Set<string>();
+
+    // DFS遍历，直到遇到汇聚点或终点
     function dfs(currentNodeId: string): void {
-      // 如果遇到汇聚点，停止遍历
+      if (visited.has(currentNodeId)) return;
+      if (segmentNodeIds.has(currentNodeId)) return; // 防止循环
+
+      const currentNode = nodeMap.get(currentNodeId);
+      if (!currentNode) return;
+
+      // 如果当前节点是汇聚点，停止遍历
       if (convergenceNode && currentNodeId === convergenceNode.id) {
         return;
       }
-      // 继续遍历出边...
+
+      segmentNodes.push(currentNode);
+      segmentNodeIds.add(currentNodeId);
+      visited.add(currentNodeId);
+
+      // 继续遍历出边
+      const outgoing = outgoingEdges.get(currentNodeId) || [];
+      for (const edge of outgoing) {
+        const targetId = edge.target;
+        
+        // 如果目标节点是汇聚点，停止遍历
+        if (convergenceNode && targetId === convergenceNode.id) {
+          continue;
+        }
+
+        // 如果目标节点已经有入边（且不是当前边），说明是汇聚点，停止
+        const targetIncoming = incomingEdges.get(targetId) || [];
+        if (targetIncoming.length > 1) {
+          continue;
+        }
+
+        dfs(targetId);
+      }
     }
+
     dfs(startNode.id);
-    parallelSegments.push({ ... });
+
+    if (segmentNodes.length > 0) {
+      parallelSegments.push({
+        id: `parallel-segment-${index}`,
+        nodes: segmentNodes,
+        isParallel: true,
+        startNodeId: segmentNodes[0].id,
+        endNodeId: segmentNodes[segmentNodes.length - 1].id,
+      });
+    }
   });
-  
+
   // 5. 识别串行工艺段（汇聚点之后的节点）
-  // ...
+  const serialSegments: ProcessSegment[] = [];
+  
+  if (convergenceNode) {
+    const serialNodes: FlowNode[] = [convergenceNode];
+    const serialNodeIds = new Set<string>([convergenceNode.id]);
+
+    // 从汇聚点开始，找到所有后续节点
+    function collectSerialNodes(nodeId: string): void {
+      const outgoing = outgoingEdges.get(nodeId) || [];
+      
+      for (const edge of outgoing) {
+        const targetId = edge.target;
+        
+        if (serialNodeIds.has(targetId)) continue;
+
+        const targetNode = nodeMap.get(targetId);
+        if (!targetNode) continue;
+
+        // 如果目标节点有多个入边，说明是另一个汇聚点，停止
+        const targetIncoming = incomingEdges.get(targetId) || [];
+        if (targetIncoming.length > 1 && targetId !== convergenceNode.id) {
+          continue;
+        }
+
+        serialNodes.push(targetNode);
+        serialNodeIds.add(targetId);
+        collectSerialNodes(targetId);
+      }
+    }
+
+    collectSerialNodes(convergenceNode.id);
+
+    // 将串行节点分组为工艺段（连续的节点为一个段）
+    if (serialNodes.length > 1) {
+      let currentSegment: FlowNode[] = [serialNodes[0]];
+      
+      for (let i = 1; i < serialNodes.length; i++) {
+        const prevNode = serialNodes[i - 1];
+        const currentNode = serialNodes[i];
+        
+        // 检查是否有直接连接
+        const hasDirectEdge = edges.some(
+          e => e.source === prevNode.id && e.target === currentNode.id
+        );
+
+        if (hasDirectEdge) {
+          currentSegment.push(currentNode);
+        } else {
+          // 开始新段
+          if (currentSegment.length > 0) {
+            serialSegments.push({
+              id: `serial-segment-${serialSegments.length}`,
+              nodes: currentSegment,
+              isParallel: false,
+              startNodeId: currentSegment[0].id,
+              endNodeId: currentSegment[currentSegment.length - 1].id,
+            });
+          }
+          currentSegment = [currentNode];
+        }
+      }
+
+      // 添加最后一个段
+      if (currentSegment.length > 0) {
+        serialSegments.push({
+          id: `serial-segment-${serialSegments.length}`,
+          nodes: currentSegment,
+          isParallel: false,
+          startNodeId: currentSegment[0].id,
+          endNodeId: currentSegment[currentSegment.length - 1].id,
+        });
+      }
+    }
+  }
+
+  return {
+    parallelSegments,
+    convergenceNode,
+    serialSegments,
+  };
 }
 ```
 
@@ -274,7 +415,7 @@ export function layoutParallelSegments(
 
 #### 2.2 汇聚点Y坐标计算
 
-**策略**：采用 `max` 策略，取所有并行段终点的最大Y坐标。
+**策略**：支持三种策略，默认采用 `max` 策略，取所有并行段终点的最大Y坐标。
 
 ```typescript
 export function calculateConvergenceY(
@@ -284,7 +425,11 @@ export function calculateConvergenceY(
   targetEdgeLength: number,
   strategy: ConvergenceStrategy = 'max'
 ): number {
-  // 计算每个并行段的终点Y坐标
+  if (parallelSegments.length === 0) {
+    return 80; // 默认值
+  }
+
+  // 计算每个并行段的终点Y坐标（段最后一个节点的底部 + 连线长度）
   const endYs = parallelSegments.map(seg => {
     const lastNode = seg.nodes[seg.nodes.length - 1];
     const lastNodeY = nodeYPositions[lastNode.id];
@@ -293,25 +438,45 @@ export function calculateConvergenceY(
     // 终点Y = 节点中心Y + 节点高度的一半 + 连线长度
     return lastNodeY + lastNodeHeight / 2 + targetEdgeLength;
   });
-  
+
   switch (strategy) {
     case 'max':
       return Math.max(...endYs);  // 推荐：所有入边都向下
-    case 'weighted':
-      // 根据工艺段长度加权平均
-      // ...
-    case 'median':
+
+    case 'weighted': {
+      // 根据工艺段长度加权
+      const totalSteps = parallelSegments.reduce((sum, seg) => sum + seg.nodes.length, 0);
+      if (totalSteps === 0) return Math.max(...endYs);
+
+      let weightedSum = 0;
+      parallelSegments.forEach((seg, idx) => {
+        const weight = seg.nodes.length / totalSteps;
+        weightedSum += endYs[idx] * weight;
+      });
+
+      return weightedSum;
+    }
+
+    case 'median': {
       // 取中位数
-      // ...
+      const sorted = [...endYs].sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      return sorted.length % 2 === 0
+        ? (sorted[mid - 1] + sorted[mid]) / 2
+        : sorted[mid];
+    }
+
+    default:
+      return Math.max(...endYs);
   }
 }
 ```
 
-**其他策略说明**：
+**策略说明**：
 
-- **`max`**（推荐）：所有入边都向下，符合视觉习惯
-- **`weighted`**：根据工艺段长度加权，长段权重更大
-- **`median`**：取所有分支终点的中位数
+- **`max`**（推荐）：所有入边都向下，符合视觉习惯，确保所有连线都从上方汇入
+- **`weighted`**：根据工艺段长度加权，长段权重更大，适合需要平衡视觉重量的场景
+- **`median`**：取所有分支终点的中位数，适合需要减少极端值影响的场景
 
 #### 2.3 串行段布局
 
@@ -714,6 +879,528 @@ else if (error > 5) color = 'yellow';
 - 标准差 < 3px（当前约 8-12px，改进后预期 < 3px）
 - 平均误差 < 2px
 
+### 实现细节
+
+**组件位置**：`src/components/graph/DebugOverlay.tsx`
+
+**核心逻辑**：
+
+```typescript
+// 计算每条连线的实际长度
+const sourceBottom = sourceCenterY + sourceHeight / 2;
+const targetTop = targetCenterY - targetHeight / 2;
+const actualLength = targetTop - sourceBottom;
+
+// 计算误差
+const error = Math.abs(actualLength - targetEdgeLength);
+
+// 确定颜色
+let color: 'green' | 'yellow' | 'red' = 'green';
+if (error > 10) color = 'red';
+else if (error > 5) color = 'yellow';
+```
+
+**节点调试信息**：
+
+调试模式还会显示每个节点的尺寸和位置信息：
+
+```typescript
+const nodeDebugInfos = nodes.map(node => {
+  const height = node.height!;
+  const width = node.width!;
+  const centerX = node.position.x + width / 2;
+  const centerY = node.position.y + height / 2;
+  
+  return {
+    id: node.id,
+    x: node.position.x + width, // 右上角
+    y: node.position.y,
+    width,
+    height,
+    centerX,
+    centerY,
+    topY: node.position.y,
+    bottomY: node.position.y + height,
+  };
+});
+```
+
+**坐标计算**：
+- 使用节点中心坐标（而非左上角）进行计算
+- 考虑视口变换（zoom, pan）
+- 标签位置在连线中点
+
+### 统计面板
+
+**组件位置**：`src/components/graph/DebugStatsPanel.tsx`
+
+统计面板显示布局验证的统计信息：
+
+- **并行工艺段统计**：每个并行段的节点数、边数、平均长度、标准差、最小/最大长度
+- **串行工艺段统计**：串行段的边数、平均长度、标准差、最小/最大长度
+- **总体统计**：并行边总数、串行边总数、并行平均长度、串行平均长度
+
+**实现逻辑**：
+
+```typescript
+const layoutValidation = validateSegmentLayout(
+  parallelSegments,
+  serialSegments,
+  nodePositions,
+  nodeHeights,
+  120 // TARGET_EDGE_LENGTH
+);
+```
+
+---
+
+## 走廊路由机制
+
+### 概述
+
+当多条连线汇入同一节点时，使用走廊路由（Corridor Routing）避免连线交叉，提高可读性。
+
+### 实现位置
+
+**组件位置**：`src/components/graph/SequenceEdge.tsx`
+
+### 路由判断
+
+```typescript
+// 判断是否使用走廊路由
+const incomingTotal = data?.incomingTotal;
+const useCorridor = incomingTotal !== undefined && incomingTotal > 1;
+```
+
+当目标节点的入边总数 > 1 时，启用走廊路由。
+
+### 路径生成
+
+走廊路由采用三段式路径：**垂直下降 → 水平移动 → 垂直上升**，并带有圆角过渡。
+
+```typescript
+function generateCorridorPath(
+  sourceX: number,
+  sourceY: number,
+  targetX: number,
+  targetY: number
+): string {
+  // 走廊参数
+  const CORRIDOR_CLEARANCE_PX = 60; // 走廊距离目标节点的净空
+  const MIN_TARGET_CLEARANCE_PX = 24; // 最小目标节点净空
+  const MIN_SOURCE_DROP_PX = 12; // 最小源节点下降距离
+  const CORNER_RADIUS = 20; // 拐角圆角半径
+
+  // 计算走廊Y坐标
+  let corridorY = targetY - CORRIDOR_CLEARANCE_PX;
+  
+  // 夹紧条件1：确保走廊不压住目标节点
+  const minCorridorY = targetY - MIN_TARGET_CLEARANCE_PX;
+  corridorY = Math.min(corridorY, minCorridorY);
+  
+  // 夹紧条件2：确保有足够的下降距离
+  const minSourceY = sourceY + MIN_SOURCE_DROP_PX;
+  corridorY = Math.max(corridorY, minSourceY);
+  
+  // 如果源点已经在目标点下方，使用简单的垂直路径
+  if (sourceY >= targetY) {
+    return `M ${sourceX} ${sourceY} L ${targetX} ${targetY}`;
+  }
+  
+  // 计算水平移动方向
+  const horizontalDistance = Math.abs(targetX - sourceX);
+  
+  // 如果水平距离很小，使用简单的垂直路径
+  if (horizontalDistance < CORNER_RADIUS * 2) {
+    return `M ${sourceX} ${sourceY} L ${targetX} ${targetY}`;
+  }
+  
+  // 生成三段式路径（带圆角）
+  // 1. 从源点垂直下降到走廊（留出圆角空间）
+  const verticalDropEndY = corridorY - CORNER_RADIUS;
+  
+  // 2. 圆角过渡到水平段
+  const isTargetRight = targetX > sourceX;
+  const cornerX1 = isTargetRight 
+    ? sourceX + CORNER_RADIUS 
+    : sourceX - CORNER_RADIUS;
+  
+  // 3. 水平移动到目标X附近（留出圆角空间）
+  const cornerX2 = isTargetRight 
+    ? targetX - CORNER_RADIUS 
+    : targetX + CORNER_RADIUS;
+  
+  // 4. 圆角过渡到垂直段
+  const verticalRiseStartY = corridorY + CORNER_RADIUS;
+  
+  // 构建完整路径
+  const path = [
+    `M ${sourceX} ${sourceY}`,                    // 起点
+    `L ${sourceX} ${verticalDropEndY}`,           // 垂直下降
+    `Q ${sourceX} ${corridorY} ${cornerX1} ${corridorY}`, // 圆角1
+    `L ${cornerX2} ${corridorY}`,                 // 水平移动
+    `Q ${targetX} ${corridorY} ${targetX} ${verticalRiseStartY}`, // 圆角2
+    `L ${targetX} ${targetY}`,                    // 垂直上升
+  ].join(' ');
+  
+  return path;
+}
+```
+
+### 路径示意图
+
+```
+源节点 (sourceX, sourceY)
+    |
+    | 垂直下降
+    |
+    └─┐ 圆角1
+      |
+      | 水平移动（走廊）
+      |
+    ┌─┘ 圆角2
+    |
+    | 垂直上升
+    |
+目标节点 (targetX, targetY)
+```
+
+### 优势
+
+- ✅ **避免交叉**：多条连线通过走廊水平对齐，避免交叉
+- ✅ **视觉清晰**：所有汇入连线在同一水平线上，易于识别
+- ✅ **平滑过渡**：使用圆角过渡，视觉效果更好
+
+---
+
+## 重排迭代机制
+
+### 概述
+
+首次布局后，节点尺寸可能发生变化（React Flow 重新测量），导致连线长度不准确。重排迭代机制自动校验间距，必要时重新布局。
+
+### 实现位置
+
+**实现位置**：`src/components/graph/LayoutController.tsx`
+
+### 迭代流程
+
+```mermaid
+flowchart TD
+    A[首次布局完成] --> B[等待1-2帧]
+    B --> C[重新获取节点尺寸]
+    C --> D[校验所有连线长度]
+    D --> E{误差 > 5px?}
+    E -->|是| F{迭代次数 < 3?}
+    E -->|否| G[布局完成]
+    F -->|是| H[重置布局标记]
+    F -->|否| I[达到最大迭代次数]
+    H --> J[触发重排]
+    J --> A
+    I --> G
+```
+
+### 实现代码
+
+```typescript
+const TARGET_EDGE_LENGTH = 120;
+const TOLERANCE = 5; // 允许误差 5px
+const MAX_ITERATIONS = 3; // 最多重排 3 次
+
+// 等待 1-2 帧让 ReactFlow 完成重新测量
+window.requestAnimationFrame(() => {
+  window.requestAnimationFrame(() => {
+    // 重新获取节点（可能已重新测量尺寸）
+    const currentNodes = getNodes() as FlowNode[];
+    const currentEdges = getEdges() as RecipeEdge[];
+
+    // 校验边间距
+    let maxError = 0;
+    let invalidEdgeCount = 0;
+
+    currentEdges.forEach(edge => {
+      const sourceNode = currentNodes.find(n => n.id === edge.source);
+      const targetNode = currentNodes.find(n => n.id === edge.target);
+
+      if (!sourceNode || !targetNode) {
+        return;
+      }
+
+      // 使用默认尺寸，与布局计算阶段保持一致
+      const sourceHeight = sourceNode.height || 120;
+
+      // 计算实际间距
+      const sourceBottom = sourceNode.position.y + sourceHeight;
+      const targetTop = targetNode.position.y;
+      const actualGap = targetTop - sourceBottom;
+      const error = Math.abs(actualGap - TARGET_EDGE_LENGTH);
+
+      if (error > TOLERANCE) {
+        invalidEdgeCount++;
+        maxError = Math.max(maxError, error);
+      }
+    });
+
+    console.log('[LayoutController] 间距校验:', {
+      iteration: layoutIterationRef.current,
+      totalEdges: currentEdges.length,
+      invalidEdges: invalidEdgeCount,
+      maxError: maxError.toFixed(1),
+      tolerance: TOLERANCE,
+    });
+
+    // 判断是否需要重排
+    const needsRelayout = invalidEdgeCount > 0 && layoutIterationRef.current < MAX_ITERATIONS;
+
+    if (needsRelayout) {
+      console.log(`[LayoutController] 间距不合格，触发第 ${layoutIterationRef.current + 1} 次重排`);
+      layoutIterationRef.current++;
+      // 重置布局标记，通过 state 触发下一轮布局
+      hasLayoutedRef.current = false;
+      setRelayoutTrigger(prev => prev + 1); // 触发重排
+      return;
+    }
+
+    // 间距合格或达到最大迭代次数，完成布局
+    if (layoutIterationRef.current >= MAX_ITERATIONS && invalidEdgeCount > 0) {
+      console.warn('[LayoutController] 达到最大迭代次数，停止重排（部分边间距可能仍不合格）');
+    } else {
+      console.log('[LayoutController] 间距校验通过，布局完成');
+    }
+
+    // 标记已布局
+    hasLayoutedRef.current = true;
+    layoutIterationRef.current = 0; // 重置迭代次数
+
+    // 执行 fitView
+    fitView({ padding: 0.2, duration: 0 });
+    onLayoutComplete();
+  });
+});
+```
+
+### 迭代参数
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| `TARGET_EDGE_LENGTH` | 120px | 目标连线长度 |
+| `TOLERANCE` | 5px | 允许误差范围 |
+| `MAX_ITERATIONS` | 3 | 最大迭代次数 |
+
+### 优势
+
+- ✅ **自动修正**：自动检测并修正布局误差
+- ✅ **防止无限循环**：最多迭代3次，避免无限重排
+- ✅ **容错机制**：即使达到最大迭代次数，也会完成布局
+
+---
+
+## 节点尺寸处理
+
+### 概述
+
+节点尺寸处理是布局算法的关键环节。系统使用 React Flow 自动测量的真实尺寸，而非估算值。
+
+### React Flow 自动测量
+
+**实现位置**：`src/components/graph/LayoutController.tsx`
+
+React Flow 11 在节点渲染后自动测量节点尺寸，存储在 `node.width` 和 `node.height` 中。
+
+```typescript
+// 等待 React Flow 自动测量所有节点的真实尺寸
+const nodesInitialized = useNodesInitialized();
+
+useLayoutEffect(() => {
+  // 条件1: 节点已初始化（React Flow 已测量尺寸）
+  if (!nodesInitialized) {
+    return;
+  }
+
+  const nodes = getNodes() as FlowNode[];
+  
+  // React Flow 11 中节点尺寸存储在 node.width 和 node.height
+  const nodeHeights: Record<string, number> = {};
+  const nodeWidths: Record<string, number> = {};
+  nodes.forEach(node => {
+    // 未测量时使用默认值
+    nodeHeights[node.id] = node.height || 120;
+    nodeWidths[node.id] = node.width || 200;
+  });
+  
+  // 使用真实尺寸进行布局计算
+  // ...
+}, [nodesInitialized, getNodes]);
+```
+
+### 默认值处理
+
+当节点尺寸未测量时，使用默认值：
+
+```typescript
+// 检查节点尺寸（放宽条件：允许部分节点未测量，使用默认尺寸继续布局）
+const measuredNodes = nodes.filter(n => n.width && n.height);
+const unmeasuredNodes = nodes.filter(n => !n.width || !n.height);
+
+if (unmeasuredNodes.length > 0) {
+  console.warn('[LayoutController] 部分节点尺寸未测量，使用默认尺寸:',
+    unmeasuredNodes.map(n => n.id)
+  );
+}
+
+// 使用默认值
+nodes.forEach(node => {
+  nodeHeights[node.id] = node.height || 120;  // 默认高度 120px
+  nodeWidths[node.id] = node.width || 200;     // 默认宽度 200px
+});
+```
+
+### 优势
+
+- ✅ **真实尺寸**：使用实际渲染尺寸，无需估算
+- ✅ **自动适应**：自动适应内容变化（展开/折叠、动态内容）
+- ✅ **无需维护**：不需要手动计算文字换行和高度
+- ✅ **容错机制**：未测量时使用默认值，保证布局不中断
+
+### 与 Canvas API 的对比
+
+**注意**：文档中描述的 Canvas API 精确测量方法（`measureTextHeight`, `wrapText`）**未在代码中实现**。当前实现依赖 React Flow 的自动尺寸测量。
+
+**原因**：React Flow 的自动尺寸测量已经提供了准确的节点尺寸，无需手动计算。
+
+---
+
+## 常见问题和解决方案
+
+### 问题1：布局抖动
+
+**症状**：页面刷新或内容变化时，节点位置发生跳动。
+
+**原因**：
+- 节点位置缓存未正确更新
+- 布局算法在节点尺寸未测量时执行
+
+**解决方案**：
+1. 确保使用 `layoutTrigger` 检测内容变化
+2. 等待节点初始化完成后再执行布局
+3. 使用 `hasLayoutedRef` 防止重复布局
+
+```typescript
+// 等待节点初始化
+if (!nodesInitialized) {
+  return;
+}
+
+// 检查是否已布局过
+if (hasLayoutedRef.current) {
+  return;
+}
+```
+
+### 问题2：位置丢失
+
+**症状**：某些节点位置为 (0, 0) 或未分配位置。
+
+**原因**：
+- 节点未正确分配到工艺段
+- 位置计算逻辑遗漏某些节点
+
+**解决方案**：
+1. 检查并处理完全没有位置的节点
+2. 为缺失节点分配默认位置
+
+```typescript
+// 检查并处理完全没有位置的节点
+const nodesWithoutPosition = nodes.filter(n => !nodePositions[n.id]);
+if (nodesWithoutPosition.length > 0) {
+  console.warn('[LayoutController] 发现未分配位置的节点:',
+    nodesWithoutPosition.map(n => n.id)
+  );
+
+  // 为缺失节点分配默认位置
+  nodesWithoutPosition.forEach(node => {
+    const displayOrder = node.data.displayOrder || 1;
+    const laneIndex = displayOrders.indexOf(displayOrder);
+    const laneX = laneIndex >= 0
+      ? START_X + laneIndex * (PROCESS_LANE_WIDTH + LANE_GAP)
+      : START_X;
+    const width = nodeWidths[node.id] || 200;
+    nodePositions[node.id] = { x: laneX + width / 2, y: INITIAL_Y };
+  });
+}
+```
+
+### 问题3：连线重叠
+
+**症状**：多条连线汇入同一节点时重叠。
+
+**原因**：
+- 未启用走廊路由
+- Handle 分配不正确
+
+**解决方案**：
+1. 确保 `incomingTotal` 正确传递
+2. 启用走廊路由机制
+3. 正确分配 `targetHandle`
+
+```typescript
+// 在 useFlowEdges 中设置 incomingTotal
+edges.forEach(edge => {
+  const incomingEdges = nodeIncomingEdges.get(edge.target) || [];
+  flowEdges.push({
+    ...edge,
+    data: {
+      ...edge.data,
+      incomingTotal: incomingEdges.length,
+    },
+  });
+});
+```
+
+### 问题4：连线长度不准确
+
+**症状**：连线长度与目标值（120px）偏差较大。
+
+**原因**：
+- 节点尺寸在布局后发生变化
+- 首次布局时节点尺寸未完全测量
+
+**解决方案**：
+1. 启用重排迭代机制
+2. 增加迭代次数或调整容差
+
+```typescript
+const TOLERANCE = 5; // 允许误差 5px
+const MAX_ITERATIONS = 3; // 最多重排 3 次
+```
+
+### 问题5：性能问题
+
+**症状**：布局计算耗时过长，页面卡顿。
+
+**原因**：
+- 节点数量过多
+- 布局计算未优化
+
+**解决方案**：
+1. 使用 `useMemo` 缓存计算结果
+2. 使用 `React.memo` 避免不必要的重渲染
+3. 批量更新节点位置
+
+```typescript
+// 使用 useMemo 缓存
+export const useFlowNodes = (): FlowNode[] => {
+  return useMemo(() => {
+    // 计算节点...
+  }, [processes, expandedProcesses, nodePositions]);
+};
+
+// 使用 memo 避免重渲染
+export const CustomNode = memo(({ ... }: NodeProps) => {
+  // ...
+});
+```
+
 ---
 
 ## 数据存储格式
@@ -884,6 +1571,35 @@ nodeWidths: {
 1. **节点初始化完成**：使用 `useNodesInitialized` 等待 React Flow 测量节点尺寸
 2. **内容变化**：通过 `layoutTrigger` prop 检测内容变化（工艺段ID、子步骤ID、展开状态）
 3. **首次布局**：使用 `hasLayoutedRef` 确保只布局一次
+4. **重排迭代**：通过 `relayoutTrigger` state 触发重排
+
+#### layoutTrigger 生成逻辑
+
+`layoutTrigger` 是一个字符串签名，用于检测内容变化：
+
+```typescript
+// 内容变化触发器 - 用于检测需要重新布局的情况
+// 只包含影响布局的信息：工艺段ID、子步骤ID、展开状态
+const layoutTrigger = useMemo(() => {
+  const processIds = processes.map(p => p.id).join(',');
+  const subStepIds = processes.flatMap(p => p.node.subSteps.map(s => s.id)).join(',');
+  const expandedIds = Array.from(expandedProcesses).sort().join(',');
+  
+  return `${processIds}|${subStepIds}|${expandedIds}`;
+}, [processes, expandedProcesses]);
+```
+
+**触发机制**：
+
+```typescript
+// 内容变化时重置布局标记和迭代次数
+if (layoutTrigger !== layoutTriggerRef.current) {
+  hasLayoutedRef.current = false;
+  layoutIterationRef.current = 0;
+  layoutTriggerRef.current = layoutTrigger;
+  setRelayoutTrigger(0); // 重置触发器
+}
+```
 
 #### 布局流程
 
@@ -1124,24 +1840,227 @@ export const useFlowEdges = (): RecipeEdge[] => {
 
 ### 1. 缓存机制
 
-- **签名比较**：使用 JSON 签名比较，避免不必要的重新计算
-- **位置缓存**：节点位置缓存在 Store 中，避免重复计算
+#### 位置缓存
+
+计算好的位置会实时更新到 `useRecipeStore` 的 `nodePositions` 缓存中，防止页面刷新抖动。
+
+```typescript
+// 在 RecipeFlow 中合并位置
+useEffect(() => {
+  setNodesState(prevNodesState => {
+    // 创建位置映射表
+    const positionMap = new Map(
+      prevNodesState.map(n => [n.id, n.position])
+    );
+    
+    // 合并：使用新的基础数据，但保留现有节点的位置
+    const mergedNodes = baseNodes.map(baseNode => ({
+      ...baseNode,
+      position: positionMap.get(baseNode.id) ?? baseNode.position ?? { x: 0, y: 0 },
+    }));
+    
+    return mergedNodes;
+  });
+}, [baseNodes]);
+```
+
+#### 签名比较
+
+使用 `layoutTrigger` 字符串签名检测内容变化，避免不必要的重新计算：
+
+```typescript
+const layoutTrigger = useMemo(() => {
+  const processIds = processes.map(p => p.id).join(',');
+  const subStepIds = processes.flatMap(p => p.node.subSteps.map(s => s.id)).join(',');
+  const expandedIds = Array.from(expandedProcesses).sort().join(',');
+  
+  return `${processIds}|${subStepIds}|${expandedIds}`;
+}, [processes, expandedProcesses]);
+```
+
+**优势**：
+- ✅ 字符串比较比对象深度比较更快
+- ✅ 只包含影响布局的关键信息
+- ✅ 避免因引用变化导致的误触发
 
 ### 2. 计算优化
 
-- **按需计算**：只在数据变化时触发布局计算
-- **批量更新**：所有位置计算完成后，一次性更新 Store
+#### 按需计算
+
+只在数据变化时触发布局计算：
+
+```typescript
+// 内容变化时重置布局标记
+if (layoutTrigger !== layoutTriggerRef.current) {
+  hasLayoutedRef.current = false;
+  layoutIterationRef.current = 0;
+  layoutTriggerRef.current = layoutTrigger;
+  setRelayoutTrigger(0);
+}
+```
+
+#### 批量更新
+
+所有位置计算完成后，一次性更新 Store：
+
+```typescript
+// 所有位置计算完成后，一次性更新
+onNodesUpdate(layoutedNodes);
+setNodes(layoutedNodes);
+```
+
+**优势**：
+- ✅ 减少 React 重渲染次数
+- ✅ 避免中间状态的闪烁
+- ✅ 提高性能
 
 ### 3. React 优化
 
-- **useMemo**：`useFlowNodes` 和 `useFlowEdges` 使用 `useMemo` 缓存结果
-- **memo**：`CustomNode` 和 `SequenceEdge` 使用 `React.memo` 避免不必要的重渲染
+#### useMemo 缓存
+
+`useFlowNodes` 和 `useFlowEdges` 使用 `useMemo` 缓存结果：
+
+```typescript
+export const useFlowNodes = (): FlowNode[] => {
+  const nodePositions = useRecipeStore((state) => state.nodePositions);
+  
+  return useMemo(() => {
+    const nodes: FlowNode[] = [];
+    
+    processes.forEach((process, index) => {
+      const isExpanded = expandedProcesses.has(process.id);
+      const displayOrder = index + 1;
+      
+      if (isExpanded) {
+        // 展开模式：为每个子步骤创建节点
+        process.node.subSteps.forEach((subStep) => {
+          nodes.push({
+            id: subStep.id,
+            type: 'subStepNode',
+            position: nodePositions[subStep.id] || { x: 0, y: 0 },
+            data: { subStep, processId: process.id, displayOrder }
+          });
+        });
+      } else {
+        // 折叠模式：创建汇总节点
+        nodes.push({
+          id: process.id,
+          type: 'processSummaryNode',
+          position: nodePositions[process.id] || { x: 0, y: 0 },
+          data: {
+            processId: process.id,
+            processName: process.name,
+            subStepCount: process.node.subSteps.length,
+            displayOrder
+          }
+        });
+      }
+    });
+    
+    return nodes;
+  }, [processes, expandedProcesses, nodePositions]);
+};
+```
+
+#### React.memo 避免重渲染
+
+`CustomNode` 和 `SequenceEdge` 使用 `React.memo` 避免不必要的重渲染：
+
+```typescript
+export const CustomNode = memo(({ id, data, selected, type }: NodeProps<CustomNodeData>) => {
+  // ...
+});
+
+export const SequenceEdge = memo(({ ... }: EdgeProps) => {
+  // ...
+});
+```
+
+**优势**：
+- ✅ 减少不必要的组件重渲染
+- ✅ 提高渲染性能
+- ✅ 减少 CPU 占用
 
 ### 4. 布局算法优化
 
-- **真实尺寸测量**：使用 React Flow 自动测量的节点尺寸，无需估算
-- **坐标系统优化**：内部使用中心点坐标计算，最后转换为左上角坐标
-- **布局触发优化**：基于内容变化触发器，避免不必要的重新计算
+#### 真实尺寸测量
+
+使用 React Flow 自动测量的节点尺寸，无需估算：
+
+```typescript
+// React Flow 11 中节点尺寸存储在 node.width 和 node.height
+const nodeHeights: Record<string, number> = {};
+const nodeWidths: Record<string, number> = {};
+nodes.forEach(node => {
+  nodeHeights[node.id] = node.height || 120;
+  nodeWidths[node.id] = node.width || 200;
+});
+```
+
+**优势**：
+- ✅ 使用实际渲染尺寸，无需估算
+- ✅ 自动适应内容变化
+- ✅ 支持动态内容（展开/折叠）
+
+#### 坐标系统优化
+
+内部使用中心点坐标计算，最后转换为左上角坐标：
+
+```typescript
+// 内部计算：使用中心点坐标
+nodePositions[node.id] = { x: laneX + width / 2, y: currentY };
+
+// 最终输出：转换为左上角坐标（React Flow 要求）
+position: {
+  x: pos.x - width / 2,  // 中心点 → 左上角
+  y: pos.y - height / 2, // 中心点 → 左上角
+}
+```
+
+**优势**：
+- ✅ 中心点坐标计算更直观
+- ✅ 减少坐标转换错误
+- ✅ 便于调试
+
+#### 布局触发优化
+
+基于内容变化触发器，避免不必要的重新计算：
+
+```typescript
+// 使用 useLayoutEffect 确保在 DOM 更新后执行
+useLayoutEffect(() => {
+  // 条件1: 节点已初始化
+  if (!nodesInitialized) return;
+  
+  // 条件2: 还没有布局过
+  if (hasLayoutedRef.current) return;
+  
+  // 执行布局计算...
+}, [nodesInitialized, getNodes, setNodes, getEdges, fitView, onLayoutComplete, onNodesUpdate, relayoutTrigger]);
+```
+
+**优势**：
+- ✅ 只在必要时执行布局计算
+- ✅ 避免重复计算
+- ✅ 提高性能
+
+### 5. 调试模式优化
+
+调试模式使用 `useMemo` 缓存计算结果，避免重复计算：
+
+```typescript
+const debugLabels = useMemo((): DebugLabel[] => {
+  if (!enabled) return [];
+  
+  // 计算调试标签...
+  return labels;
+}, [enabled, edges, getNodes]);
+```
+
+**优势**：
+- ✅ 只在调试模式启用时计算
+- ✅ 缓存计算结果
+- ✅ 减少性能开销
 
 **注意**：文档中描述的"智能统一尺寸"和"并行分支压缩"功能未实现。
 

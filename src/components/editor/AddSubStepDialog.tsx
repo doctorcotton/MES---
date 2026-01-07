@@ -19,7 +19,7 @@ interface AddSubStepDialogProps {
 
 export function AddSubStepDialog({ open, onOpenChange, onConfirm }: AddSubStepDialogProps) {
     const [selectedType, setSelectedType] = useState<ProcessType | null>(null);
-    const { subStepTemplates } = useProcessTypeConfigStore();
+    const { subStepTemplates, getAllSubStepTypes } = useProcessTypeConfigStore();
 
     const handleConfirm = () => {
         if (selectedType) {
@@ -34,6 +34,8 @@ export function AddSubStepDialog({ open, onOpenChange, onConfirm }: AddSubStepDi
         onOpenChange(false);
     };
 
+    const availableTypes = getAllSubStepTypes();
+
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="max-w-lg">
@@ -43,8 +45,9 @@ export function AddSubStepDialog({ open, onOpenChange, onConfirm }: AddSubStepDi
                 <div className="py-4">
                     <p className="text-sm text-gray-600 mb-4">选择要添加的子步骤类型，将使用该类型的默认配置：</p>
                     <div className="grid grid-cols-2 gap-3">
-                        {Object.values(ProcessType).map((type) => {
+                        {availableTypes.map((type) => {
                             const template = subStepTemplates[type];
+                            if (!template) return null;
                             const isSelected = selectedType === type;
                             return (
                                 <Button

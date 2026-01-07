@@ -43,10 +43,26 @@ import { NestedFieldEditor } from './NestedFieldEditor';
 import { SelectOptionsEditor } from './SelectOptionsEditor';
 import { v4 as uuidv4 } from 'uuid';
 
-const PROCESS_TYPES: { value: ProcessType; label: string }[] = Object.values(ProcessType).map(type => ({
-    value: type,
-    label: getProcessTypeName(type)
-}));
+// 动态获取工艺类型列表
+const getProcessTypes = (): { value: ProcessType; label: string }[] => {
+    try {
+        const { useProcessTypeConfigStore } = require('@/store/useProcessTypeConfigStore');
+        const types = useProcessTypeConfigStore.getState().getAllSubStepTypes();
+        return types.map(type => ({
+            value: type,
+            label: getProcessTypeName(type)
+        }));
+    } catch {
+        // 如果 store 未初始化，返回基础类型
+        const { ProcessTypes } = require('@/types/recipe');
+        return Object.values(ProcessTypes).map(type => ({
+            value: type,
+            label: getProcessTypeName(type)
+        }));
+    }
+};
+
+const PROCESS_TYPES: { value: ProcessType; label: string }[] = getProcessTypes();
 
 const INPUT_TYPES: { value: FieldInputType; label: string }[] = [
     { value: 'text', label: '文本' },

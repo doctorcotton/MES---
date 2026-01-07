@@ -18,8 +18,8 @@ import {
     DialogTitle,
     DialogFooter,
 } from '@/components/ui/dialog';
-import { ArrowLeft, Edit2, Plus, Trash2, RotateCcw, Save } from 'lucide-react';
-import { ProcessType } from '@/types/recipe';
+import { ArrowLeft, Edit2, Plus, Trash2, RotateCcw, Save, AlertCircle } from 'lucide-react';
+import { ProcessType, ProcessTypes } from '@/types/recipe';
 import { useProcessTypeConfigStore } from '@/store/useProcessTypeConfigStore';
 import {
     SubStepTemplate,
@@ -28,6 +28,7 @@ import {
 } from '@/types/processTypeConfig';
 import { useFieldConfigStore } from '@/store/useFieldConfigStore';
 import { FieldConfigEditor } from './FieldConfigEditor';
+import { DeviceType } from '@/types/equipment';
 
 export function ConfigPage() {
     const navigate = useNavigate();
@@ -35,6 +36,9 @@ export function ConfigPage() {
         subStepTemplates,
         processSegmentTemplates,
         updateSubStepTemplate,
+        addSubStepType,
+        removeSubStepType,
+        getAllSubStepTypes,
         addProcessSegmentTemplate,
         updateProcessSegmentTemplate,
         removeProcessSegmentTemplate,
@@ -45,12 +49,31 @@ export function ConfigPage() {
     const [editingSubStep, setEditingSubStep] = useState<ProcessType | null>(null);
     const [editingSegment, setEditingSegment] = useState<string | null>(null);
     const [newSegmentOpen, setNewSegmentOpen] = useState(false);
+    const [newSubStepOpen, setNewSubStepOpen] = useState(false);
     const [editSubStepValues, setEditSubStepValues] = useState<Partial<SubStepTemplate>>({});
     const [editSegmentValues, setEditSegmentValues] = useState<Partial<ProcessSegmentTemplate>>({});
+    const [newSubStepValues, setNewSubStepValues] = useState<{
+        type: string;
+        displayName: string;
+        label: string;
+        defaultDeviceCode: string;
+        description: string;
+    }>({
+        type: '',
+        displayName: '',
+        label: '',
+        defaultDeviceCode: '',
+        description: '',
+    });
+    const [deleteError, setDeleteError] = useState<string | null>(null);
 
     // 开始编辑子步骤模板
     const handleEditSubStep = (type: ProcessType) => {
         const template = subStepTemplates[type];
+        if (!template) {
+            console.warn(`Template for type ${type} not found`);
+            return;
+        }
         const processFields = getConfigsByProcessType(type);
         const allFields = processFields.map(f => f.key);
         setEditingSubStep(type);
@@ -114,6 +137,78 @@ export function ConfigPage() {
         }
     };
 
+    // 处理新增子步骤类型
+    const handleAddSubStepType = async () => {
+        if (!newSubStepValues.type || !newSubStepValues.displayName) {
+            alert('请填写类型名称和显示名称');
+            return;
+        }
+
+        // 检查类型是否已存在
+        if (subStepTemplates[newSubStepValues.type]) {
+            alert('该类型已存在');
+            return;
+        }
+
+        // 创建默认模板
+        const template: SubStepTemplate = {
+            type: newSubStepValues.type,
+            version: 1,
+            label: newSubStepValues.label || newSubStepValues.displayName,
+            defaultDeviceCode: newSubStepValues.defaultDeviceCode || '',
+            defaultDeviceType: DeviceType.OTHER,
+            defaultParams: {
+                processType: newSubStepValues.type,
+                params: '', // 默认使用 OTHER 类型的参数结构
+            },
+            description: newSubStepValues.description,
+        };
+
+        try {
+            await addSubStepType(newSubStepValues.type, template, newSubStepValues.displayName);
+            setNewSubStepOpen(false);
+            setNewSubStepValues({
+                type: '',
+                displayName: '',
+                label: '',
+                defaultDeviceCode: '',
+                description: '',
+            });
+        } catch (error: any) {
+            alert(`创建失败: ${error.message}`);
+        }
+    };
+
+    // 处理删除子步骤类型
+    const handleRemoveSubStepType = (type: string) => {
+        setDeleteError(null);
+        const result = removeSubStepType(type);
+        if (!result.success) {
+            if (result.usageLocations && result.usageLocations.length > 0) {
+                setDeleteError(
+                    `${result.error}\n使用位置:\n${result.usageLocations.slice(0, 5).join('\n')}${
+                        result.usageLocations.length > 5 ? `\n...等共${result.usageLocations.length}处` : ''
+                    }`
+                );
+            } else {
+                alert(result.error || '删除失败');
+            }
+        }
+    };
+
+    // 检查是否为系统默认类型
+    const isSystemType = (type: string): boolean => {
+        return [
+            ProcessTypes.DISSOLUTION,
+            ProcessTypes.COMPOUNDING,
+            ProcessTypes.FILTRATION,
+            ProcessTypes.TRANSFER,
+            ProcessTypes.FLAVOR_ADDITION,
+            ProcessTypes.OTHER,
+            ProcessTypes.EXTRACTION,
+        ].includes(type as any);
+    };
+
     return (
         <div className="min-h-screen bg-slate-50">
             {/* Header */}
@@ -149,6 +244,21 @@ export function ConfigPage() {
 
                     {/* 子步骤类型配置 */}
                     <TabsContent value="substep">
+                        <div className="mb-4 flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <Button onClick={() => setNewSubStepOpen(true)}>
+                                    <Plus className="mr-2 h-4 w-4" />
+                                    新增子步骤类型
+                                </Button>
+                            </div>
+                            {deleteError && (
+                                <div className="flex items-center gap-2 text-red-600 text-sm bg-red-50 px-3 py-2 rounded">
+                                    <AlertCircle className="h-4 w-4" />
+                                    <span className="whitespace-pre-line">{deleteError}</span>
+                                    <Button variant="ghost" size="sm" onClick={() => setDeleteError(null)}>×</Button>
+                                </div>
+                            )}
+                        </div>
                         <div className="rounded-lg border bg-white">
                             <Table>
                                 <TableHeader>
@@ -159,16 +269,23 @@ export function ConfigPage() {
                                         <TableHead>工艺参数字段</TableHead>
                                         <TableHead>版本</TableHead>
                                         <TableHead>描述</TableHead>
-                                        <TableHead className="w-[80px]">操作</TableHead>
+                                        <TableHead className="w-[120px]">操作</TableHead>
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                    {Object.values(ProcessType).map((type) => {
+                                    {getAllSubStepTypes().map((type) => {
                                         const template = subStepTemplates[type];
+                                        if (!template) return null;
                                         const fields = getConfigsByProcessType(type);
+                                        const isSystem = isSystemType(type);
                                         return (
                                             <TableRow key={type}>
-                                                <TableCell className="font-medium">{getProcessTypeName(type)}</TableCell>
+                                                <TableCell className="font-medium">
+                                                    {getProcessTypeName(type)}
+                                                    {isSystem && (
+                                                        <span className="ml-2 text-xs text-gray-400">(系统)</span>
+                                                    )}
+                                                </TableCell>
                                                 <TableCell>{template.label}</TableCell>
                                                 <TableCell>{template.defaultDeviceCode || '-'}</TableCell>
                                                 <TableCell>
@@ -186,9 +303,24 @@ export function ConfigPage() {
                                                 <TableCell>v{template.version}</TableCell>
                                                 <TableCell className="text-sm text-gray-600">{template.description || '-'}</TableCell>
                                                 <TableCell>
-                                                    <Button variant="ghost" size="icon" onClick={() => handleEditSubStep(type)}>
-                                                        <Edit2 className="h-4 w-4" />
-                                                    </Button>
+                                                    <div className="flex gap-1">
+                                                        <Button variant="ghost" size="icon" onClick={() => handleEditSubStep(type)}>
+                                                            <Edit2 className="h-4 w-4" />
+                                                        </Button>
+                                                        {!isSystem && (
+                                                            <Button
+                                                                variant="ghost"
+                                                                size="icon"
+                                                                onClick={() => {
+                                                                    if (confirm(`确定删除子步骤类型 "${getProcessTypeName(type)}" 吗？`)) {
+                                                                        handleRemoveSubStepType(type);
+                                                                    }
+                                                                }}
+                                                            >
+                                                                <Trash2 className="h-4 w-4 text-red-500" />
+                                                            </Button>
+                                                        )}
+                                                    </div>
                                                 </TableCell>
                                             </TableRow>
                                         );
@@ -379,7 +511,7 @@ export function ConfigPage() {
                         <div>
                             <label className="text-sm font-medium">默认子步骤序列（选择类型）</label>
                             <div className="flex flex-wrap gap-2 mt-2">
-                                {Object.values(ProcessType).map((type) => {
+                                {getAllSubStepTypes().map((type) => {
                                     const isSelected = editSegmentValues.defaultSubStepTypes?.includes(type);
                                     return (
                                         <Button
@@ -444,7 +576,7 @@ export function ConfigPage() {
                         <div>
                             <label className="text-sm font-medium">默认子步骤序列</label>
                             <div className="flex flex-wrap gap-2 mt-2">
-                                {Object.values(ProcessType).map((type) => {
+                                {getAllSubStepTypes().map((type) => {
                                     const isSelected = editSegmentValues.defaultSubStepTypes?.includes(type);
                                     return (
                                         <Button
@@ -478,6 +610,69 @@ export function ConfigPage() {
                         <Button onClick={handleAddSegment} disabled={!editSegmentValues.name}>
                             <Plus className="mr-2 h-4 w-4" />
                             添加
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* 新增子步骤类型弹窗 */}
+            <Dialog open={newSubStepOpen} onOpenChange={setNewSubStepOpen}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>新增子步骤类型</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-4 py-4">
+                        <div>
+                            <label className="text-sm font-medium">类型名称 (英文，小写)</label>
+                            <Input
+                                value={newSubStepValues.type}
+                                onChange={(e) => setNewSubStepValues({ ...newSubStepValues, type: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '') })}
+                                placeholder="例如: extraction"
+                            />
+                            <p className="text-xs text-gray-500 mt-1">只能包含小写字母、数字和下划线</p>
+                        </div>
+                        <div>
+                            <label className="text-sm font-medium">显示名称 (中文)</label>
+                            <Input
+                                value={newSubStepValues.displayName}
+                                onChange={(e) => setNewSubStepValues({ ...newSubStepValues, displayName: e.target.value })}
+                                placeholder="例如: 萃取"
+                            />
+                        </div>
+                        <div>
+                            <label className="text-sm font-medium">默认步骤名称</label>
+                            <Input
+                                value={newSubStepValues.label}
+                                onChange={(e) => setNewSubStepValues({ ...newSubStepValues, label: e.target.value })}
+                                placeholder="例如: 萃取"
+                            />
+                        </div>
+                        <div>
+                            <label className="text-sm font-medium">默认设备编号</label>
+                            <Input
+                                value={newSubStepValues.defaultDeviceCode}
+                                onChange={(e) => setNewSubStepValues({ ...newSubStepValues, defaultDeviceCode: e.target.value })}
+                                placeholder="例如: 萃茶釜"
+                            />
+                        </div>
+                        <div>
+                            <label className="text-sm font-medium">描述</label>
+                            <Input
+                                value={newSubStepValues.description}
+                                onChange={(e) => setNewSubStepValues({ ...newSubStepValues, description: e.target.value })}
+                                placeholder="例如: 茶叶泡制萃取"
+                            />
+                        </div>
+                        <div className="bg-blue-50 p-3 rounded text-sm text-blue-700">
+                            <p className="font-medium mb-1">提示：</p>
+                            <p>创建类型后，系统会自动根据默认参数结构创建对应的字段配置。您可以在字段管理中进一步调整字段设置。</p>
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => { setNewSubStepOpen(false); setNewSubStepValues({ type: '', displayName: '', label: '', defaultDeviceCode: '', description: '' }); }}>取消</Button>
+                        <Button onClick={handleAddSubStepType} disabled={!newSubStepValues.type || !newSubStepValues.displayName}>
+                            <Plus className="mr-2 h-4 w-4" />
+                            创建
                         </Button>
                     </DialogFooter>
                 </DialogContent>

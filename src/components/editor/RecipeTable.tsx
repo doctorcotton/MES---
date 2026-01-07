@@ -355,7 +355,8 @@ export function RecipeTable() {
 
   const [connectionModalProcessId, setConnectionModalProcessId] = useState<string | null>(null);
   const [paramsModalSubStepId, setParamsModalSubStepId] = useState<string | null>(null);
-  const [editingSubStepId, setEditingSubStepId] = useState<string | null>(null);
+  // 编辑状态：追踪正在编辑的子步骤ID和具体字段
+  const [editingSubStep, setEditingSubStep] = useState<{ id: string; field: 'label' | 'deviceCode' | 'ingredients' } | null>(null);
   const [editingProcessId, setEditingProcessId] = useState<string | null>(null);
   const [editSubStepValues, setEditSubStepValues] = useState<Partial<SubStep>>({});
   const [editProcessValues, setEditProcessValues] = useState<{ name?: string; description?: string }>({});
@@ -488,13 +489,13 @@ export function RecipeTable() {
     setAddSubStepProcessId(null);
   };
 
-  const handleStartEditSubStep = (subStep: SubStep) => {
-    setEditingSubStepId(subStep.id);
+  const handleStartEditSubStep = (subStep: SubStep, field: 'label' | 'deviceCode' | 'ingredients') => {
+    setEditingSubStep({ id: subStep.id, field });
     setEditSubStepValues(subStep);
   };
 
   const handleSaveEditSubStep = (processId: string, subStepId: string) => {
-    if (editingSubStepId === subStepId) {
+    if (editingSubStep?.id === subStepId) {
       // 自动同步 deviceCode 到 deviceRequirement
       const updatedValues = { ...editSubStepValues };
 
@@ -521,13 +522,13 @@ export function RecipeTable() {
       }
 
       updateSubStep(processId, subStepId, updatedValues);
-      setEditingSubStepId(null);
+      setEditingSubStep(null);
       setEditSubStepValues({});
     }
   };
 
   const handleCancelEdit = () => {
-    setEditingSubStepId(null);
+    setEditingSubStep(null);
     setEditSubStepValues({});
   };
 
@@ -721,7 +722,9 @@ export function RecipeTable() {
 
                       {/* Process内的子步骤 */}
                       {isExpanded && process.node.subSteps.map((subStep) => {
-                        const isEditing = editingSubStepId === subStep.id;
+                        const isEditingLabel = editingSubStep?.id === subStep.id && editingSubStep?.field === 'label';
+                        const isEditingDeviceCode = editingSubStep?.id === subStep.id && editingSubStep?.field === 'deviceCode';
+                        const isEditingIngredients = editingSubStep?.id === subStep.id && editingSubStep?.field === 'ingredients';
                         const isHovered = hoveredNodeId === subStep.id;
 
                         return (
@@ -739,7 +742,7 @@ export function RecipeTable() {
                               <span className="font-mono text-sm">{subStep.order}</span>
                             </TableCell>
                             <TableCell>
-                              {isEditing ? (
+                              {isEditingLabel ? (
                                 <Input
                                   value={editSubStepValues.label ?? subStep.label}
                                   onChange={(e) =>
@@ -760,7 +763,7 @@ export function RecipeTable() {
                                     'min-w-[80px] inline-block',
                                     !subStep.label && canEdit && 'border border-dashed border-gray-300 px-2 py-1 rounded text-gray-400'
                                   )}
-                                  onClick={() => canEdit && handleStartEditSubStep(subStep)}
+                                  onClick={() => canEdit && handleStartEditSubStep(subStep, 'label')}
                                 >
                                   {subStep.label || '未命名'}
                                   {!canEdit && <Lock className="ml-1 inline h-3 w-3" />}
@@ -773,7 +776,7 @@ export function RecipeTable() {
                               </span>
                             </TableCell>
                             <TableCell>
-                              {isEditing ? (
+                              {isEditingDeviceCode ? (
                                 <Input
                                   value={editSubStepValues.deviceCode ?? subStep.deviceCode}
                                   onChange={(e) =>
@@ -787,19 +790,20 @@ export function RecipeTable() {
                                     if (e.key === 'Enter') handleSaveEditSubStep(process.id, subStep.id);
                                     if (e.key === 'Escape') handleCancelEdit();
                                   }}
+                                  autoFocus
                                   disabled={!canEdit}
                                 />
                               ) : (
                                 <span
                                   className={`${canEdit ? 'cursor-pointer hover:text-blue-600' : 'cursor-not-allowed opacity-60'}`}
-                                  onClick={() => canEdit && handleStartEditSubStep(subStep)}
+                                  onClick={() => canEdit && handleStartEditSubStep(subStep, 'deviceCode')}
                                 >
                                   {getEquipmentConfig(subStep)?.deviceCode || subStep.deviceCode}
                                 </span>
                               )}
                             </TableCell>
-                            <TableCell>
-                              {isEditing ? (
+                            <TableCell className="max-w-[150px] overflow-hidden">
+                              {isEditingIngredients ? (
                                 <Textarea
                                   value={editSubStepValues.ingredients ?? subStep.ingredients}
                                   onChange={(e) =>
@@ -809,14 +813,18 @@ export function RecipeTable() {
                                     })
                                   }
                                   onBlur={() => handleSaveEditSubStep(process.id, subStep.id)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Escape') handleCancelEdit();
+                                  }}
+                                  autoFocus
                                   rows={2}
-                                  className="min-w-[150px]"
+                                  className="w-full max-w-full text-sm"
                                   disabled={!canEdit}
                                 />
                               ) : (
                                 <span
                                   className={`text-xs ${canEdit ? 'cursor-pointer hover:text-blue-600' : 'cursor-not-allowed opacity-60'}`}
-                                  onClick={() => canEdit && handleStartEditSubStep(subStep)}
+                                  onClick={() => canEdit && handleStartEditSubStep(subStep, 'ingredients')}
                                 >
                                   {getMaterials(subStep).length > 0
                                     ? getMaterials(subStep).map(m => m.name).join('、')
