@@ -9,7 +9,7 @@ export function useEditLock() {
     if (!userId) return { success: false, message: '用户未登录' };
 
     try {
-      const response = await fetch('http://localhost:3001/api/recipe/acquire-lock', {
+      const response = await fetch('/api/recipe/acquire-lock', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -38,7 +38,7 @@ export function useEditLock() {
     if (!userId) return { success: false };
 
     try {
-      const response = await fetch('http://localhost:3001/api/recipe/release-lock', {
+      const response = await fetch('/api/recipe/release-lock', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId }),

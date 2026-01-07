@@ -23,5 +23,12 @@ export default defineConfig({
     host: '0.0.0.0', // 允许通过 IP 地址访问，支持局域网访问
     port: parseInt(process.env.VITE_PORT || '5173', 10),
     strictPort: false, // 如果端口被占用，尝试下一个可用端口
+    proxy: {
+      // 将前端的 /api 请求代理到本机的后端服务
+      '/api': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+      },
+    },
   },
 })

@@ -1,7 +1,9 @@
 import { io, Socket } from 'socket.io-client';
 
-
-const SOCKET_URL = (import.meta as any).env.VITE_SOCKET_URL || 'http://localhost:3001';
+// 优先使用环境变量配置 WebSocket 地址，否则根据当前页面的主机名推导后端地址
+const SOCKET_URL =
+  (import.meta as any).env.VITE_SOCKET_URL ||
+  `${window.location.protocol}//${window.location.hostname}:3001`;
 
 class SocketService {
   private socket: Socket | null = null;
