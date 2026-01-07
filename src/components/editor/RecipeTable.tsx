@@ -12,6 +12,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
@@ -76,10 +84,11 @@ function SortableProcessRow({
   getProcessConnections,
   canEdit,
   setConnectionModalProcessId,
-  removeProcess,
+  setDeleteConfirmDialog,
   insertProcess,
   duplicateProcess,
   setEditingProcessId,
+  setEditingContext,
 }: {
   process: Process;
   index: number;
@@ -94,10 +103,11 @@ function SortableProcessRow({
   getProcessConnections: (id: string) => any[];
   canEdit: boolean;
   setConnectionModalProcessId: (id: string | null) => void;
-  removeProcess: (id: string) => void;
+  setDeleteConfirmDialog: (dialog: { open: boolean; processId: string | null }) => void;
   insertProcess: (process: Process, targetIndex: number) => void;
   duplicateProcess: (processId: string, insertAfter: boolean) => void;
   setEditingProcessId: (id: string | null) => void;
+  setEditingContext: (context: { processId: string; subStepId?: string } | null) => void;
 }) {
   const {
     attributes,
@@ -274,9 +284,7 @@ function SortableProcessRow({
                       variant="ghost"
                       size="icon"
                       onClick={() => {
-                        if (confirm(`确定要删除工艺段 ${process.id} 及其所有步骤吗？`)) {
-                          removeProcess(process.id);
-                        }
+                        setDeleteConfirmDialog({ open: true, processId: process.id });
                       }}
                       title="删除工艺段"
                     >
@@ -313,9 +321,7 @@ function SortableProcessRow({
               alert('需要编辑权限或进入演示模式');
               return;
             }
-            if (confirm(`确定要删除工艺段 ${process.id} 及其所有步骤吗？`)) {
-              removeProcess(process.id);
-            }
+            setDeleteConfirmDialog({ open: true, processId: process.id });
           }}
           disabled={!canEdit}
         >
@@ -368,6 +374,10 @@ export function RecipeTable() {
   // 类型选择对话框状态
   const [addSubStepDialogOpen, setAddSubStepDialogOpen] = useState(false);
   const [addSubStepProcessId, setAddSubStepProcessId] = useState<string | null>(null);
+  const [deleteConfirmDialog, setDeleteConfirmDialog] = useState<{ open: boolean; processId: string | null }>({
+    open: false,
+    processId: null,
+  });
   const { getSubStepTemplate } = useProcessTypeConfigStore();
 
   // 同步expandedProcesses，确保processes更新时也更新展开状态
@@ -474,7 +484,7 @@ export function RecipeTable() {
     const existingSubSteps = process?.node.subSteps || [];
     const subStepCount = existingSubSteps.length || 0;
     const template = getSubStepTemplate(processType);
-    
+
     if (!template) {
       console.error(`Template for processType ${processType} not found`);
       alert(`无法创建子步骤：类型 ${processType} 的模板不存在`);
@@ -711,7 +721,7 @@ export function RecipeTable() {
           collisionDetection={closestCenter}
           onDragEnd={handleDragEnd}
         >
-          <Table className="table-fixed w-full min-w-[800px]">
+          <Table className="table-fixed w-full min-w-[800px]" wrapperClassName="overflow-visible">
             <TableHeader className="sticky top-0 z-10 bg-white shadow-sm">
               <TableRow>
                 <TableHead className="w-[60px] min-w-[60px] whitespace-nowrap">工艺段</TableHead>
@@ -752,10 +762,11 @@ export function RecipeTable() {
                         getProcessConnections={getProcessConnections}
                         canEdit={canEdit}
                         setConnectionModalProcessId={setConnectionModalProcessId}
-                        removeProcess={removeProcess}
+                        setDeleteConfirmDialog={setDeleteConfirmDialog}
                         insertProcess={insertProcess}
                         duplicateProcess={duplicateProcess}
                         setEditingProcessId={setEditingProcessId}
+                        setEditingContext={setEditingContext}
                       />
 
                       {/* Process内的子步骤 */}
@@ -978,6 +989,36 @@ export function RecipeTable() {
         onOpenChange={setAddSubStepDialogOpen}
         onConfirm={handleConfirmAddSubStep}
       />
+
+      <Dialog open={deleteConfirmDialog.open} onOpenChange={(open) => setDeleteConfirmDialog({ open, processId: null })}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>确认删除</DialogTitle>
+            <DialogDescription>
+              确定要删除工艺段 {deleteConfirmDialog.processId} 及其所有步骤吗？
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteConfirmDialog({ open: false, processId: null })}
+            >
+              取消
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (deleteConfirmDialog.processId) {
+                  removeProcess(deleteConfirmDialog.processId);
+                }
+                setDeleteConfirmDialog({ open: false, processId: null });
+              }}
+            >
+              确定
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

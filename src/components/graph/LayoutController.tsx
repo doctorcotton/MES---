@@ -28,6 +28,8 @@ export function LayoutController({ onLayoutComplete, onNodesUpdate, layoutTrigge
   const layoutTriggerRef = useRef(layoutTrigger);
   const layoutIterationRef = useRef(0); // 记录重排迭代次数
   const [relayoutTrigger, setRelayoutTrigger] = useState(0); // 用于触发重排的 state
+  const measurementRetryRef = useRef(0); // 记录测量重试次数
+  const measurementRetryTimeoutRef = useRef<number | null>(null); // 测量重试的定时器
 
   // 内容变化时重置布局标记和迭代次数（移到 effect 中，避免在 render 阶段调用 setState）
   useLayoutEffect(() => {
@@ -38,6 +40,12 @@ export function LayoutController({ onLayoutComplete, onNodesUpdate, layoutTrigge
       });
       hasLayoutedRef.current = false;
       layoutIterationRef.current = 0;
+      measurementRetryRef.current = 0; // 重置测量重试次数
+      // 清理之前的测量重试定时器
+      if (measurementRetryTimeoutRef.current !== null) {
+        window.cancelAnimationFrame(measurementRetryTimeoutRef.current);
+        measurementRetryTimeoutRef.current = null;
+      }
       layoutTriggerRef.current = layoutTrigger;
       // 递增触发器，确保触发依赖变化（而不是重置为 0，因为可能之前就是 0）
       setRelayoutTrigger(prev => prev + 1);
@@ -98,8 +106,39 @@ export function LayoutController({ onLayoutComplete, onNodesUpdate, layoutTrigge
         } : null,
       });
 
+      // 如果所有节点都未测量（可能是 React Flow 临时清空了尺寸），延迟重试而不是用默认尺寸布局
+      const MAX_MEASUREMENT_RETRIES = 5; // 最多重试 5 次
+      if (measuredNodes.length === 0 && nodes.length > 0) {
+        if (measurementRetryRef.current < MAX_MEASUREMENT_RETRIES) {
+          console.warn(`[LayoutController] 所有节点尺寸未测量，延迟重试 (${measurementRetryRef.current + 1}/${MAX_MEASUREMENT_RETRIES})`);
+          measurementRetryRef.current++;
+          
+          // 清理之前的定时器
+          if (measurementRetryTimeoutRef.current !== null) {
+            window.cancelAnimationFrame(measurementRetryTimeoutRef.current);
+          }
+          
+          // 延迟 2-3 帧后重试
+          measurementRetryTimeoutRef.current = window.requestAnimationFrame(() => {
+            window.requestAnimationFrame(() => {
+              measurementRetryTimeoutRef.current = null;
+              // 通过递增 relayoutTrigger 触发重试
+              setRelayoutTrigger(prev => prev + 1);
+            });
+          });
+          return; // 不继续布局，等待重试
+        } else {
+          console.warn('[LayoutController] 达到最大测量重试次数，使用默认尺寸继续布局');
+          // 重置重试计数，允许后续重排时再次尝试
+          measurementRetryRef.current = 0;
+        }
+      } else {
+        // 有节点已测量，重置重试计数
+        measurementRetryRef.current = 0;
+      }
+
       // 即使部分节点未测量，也继续布局（使用默认值）
-      if (unmeasuredNodes.length > 0) {
+      if (unmeasuredNodes.length > 0 && measuredNodes.length > 0) {
         console.warn('[LayoutController] 部分节点尺寸未测量，使用默认尺寸:',
           unmeasuredNodes.map(n => n.id)
         );

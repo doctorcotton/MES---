@@ -7,6 +7,7 @@ import { initDatabase, getRecipe, updateRecipe, getFieldConfigs, getFieldConfig,
 import { lockManager } from './lockManager';
 import { userManager } from './userManager';
 import { RecipeData, SocketUser } from './types';
+import { getLocalIP } from './utils/network';
 
 const app = express();
 const httpServer = createServer(app);
@@ -317,7 +318,76 @@ setInterval(() => {
   }
 }, 10000); // 每10秒检查一次
 
-const PORT = process.env.PORT || 3001;
-httpServer.listen(PORT, () => {
+/**
+ * 发送飞书 Webhook 通知
+ */
+async function sendFeishuWebhook(hostIP: string, backendPort: number): Promise<void> {
+  const webhookUrl = process.env.WEBHOOK_URL || 'https://k11pnjpvz1.feishu.cn/base/workflow/webhook/event/IGolaXSBbwNnxsh5FSOc9K82njh';
+  const serviceName = process.env.SERVICE_NAME || 'MES配方编辑器';
+  
+  // 如果 webhook URL 未配置，跳过发送
+  if (!webhookUrl || webhookUrl.trim() === '') {
+    console.log('  Webhook URL 未配置，跳过通知');
+    return;
+  }
+
+  // 获取前端地址
+  // 优先使用 FRONTEND_URL，如果没有则使用 FRONTEND_PORT，最后默认 5173
+  let frontendUrl: string;
+  if (process.env.FRONTEND_URL) {
+    frontendUrl = process.env.FRONTEND_URL;
+  } else {
+    const frontendPort = parseInt(process.env.FRONTEND_PORT || '5173', 10);
+    frontendUrl = `http://${hostIP}:${frontendPort}`;
+  }
+
+  // 格式化启动时间
+  const now = new Date();
+  const startTime = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+
+  // 从 frontendUrl 中提取端口
+  const frontendPortMatch = frontendUrl.match(/:(\d+)/);
+  const frontendPort = frontendPortMatch ? parseInt(frontendPortMatch[1], 10) : 5173;
+
+  const payload = {
+    service_name: serviceName,
+    service_url: frontendUrl,
+    host_ip: hostIP,
+    port: frontendPort,
+    start_time: startTime,
+    status: 'started'
+  };
+
+  try {
+    const response = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (response.ok) {
+      console.log(`  飞书通知发送成功: ${response.status}`);
+    } else {
+      console.error(`  飞书通知发送失败: ${response.status} ${response.statusText}`);
+    }
+  } catch (error: any) {
+    // Webhook 失败不应阻止服务器启动
+    console.error(`  飞书通知发送失败: ${error.message}`);
+  }
+}
+
+const PORT = parseInt(process.env.PORT || '3001', 10);
+const HOST = '0.0.0.0'; // 绑定到所有网络接口，允许局域网访问
+
+httpServer.listen(PORT, HOST, async () => {
+  const localIP = getLocalIP();
   console.log(`服务器运行在 http://localhost:${PORT}`);
+  console.log(`局域网访问地址: http://${localIP}:${PORT}`);
+  
+  // 发送 webhook 通知（异步，不阻塞启动）
+  sendFeishuWebhook(localIP, PORT).catch(err => {
+    console.error('Webhook 发送异常:', err);
+  });
 });

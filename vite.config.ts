@@ -18,4 +18,10 @@ export default defineConfig({
   // 例如：base: '/MES---/' （替换为你的仓库名）
   // 如果部署在自定义域名，可以设置为 '/'
   base: process.env.GITHUB_PAGES === 'true' ? '/MES---/' : '/',
+  // 开发服务器配置
+  server: {
+    host: '0.0.0.0', // 允许通过 IP 地址访问，支持局域网访问
+    port: parseInt(process.env.VITE_PORT || '5173', 10),
+    strictPort: false, // 如果端口被占用，尝试下一个可用端口
+  },
 })

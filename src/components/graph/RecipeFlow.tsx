@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useMemo } from 'react';
 import ReactFlow, {
   Background,
   Controls,
@@ -18,6 +18,7 @@ import { DebugStatsPanel } from './DebugStatsPanel';
 import { LayoutController } from './LayoutController';
 import { useRecipeStore, useFlowNodes, useFlowEdges } from '@/store/useRecipeStore';
 import { useCollabStore } from '@/store/useCollabStore';
+import { useFieldConfigStore } from '@/store/useFieldConfigStore';
 import { FlowNode } from '@/types/recipe';
 
 const nodeTypes = {
@@ -38,7 +39,8 @@ function NodeInternalsUpdater({ nodes, edges }: { nodes: Node[], edges: Edge[] }
 
   // 当 edges 变化时，更新所有节点的 handle 位置
   // React Flow 需要此调用来感知动态 handle 数量的变化
-  useEffect(() => {
+  // 使用 useLayoutEffect 确保在布局计算之前完成，减少布局后的重新测量
+  useLayoutEffect(() => {
     if (nodes.length > 0) {
       const nodeIds = nodes.map(n => n.id);
       updateNodeInternals(nodeIds);
@@ -56,6 +58,7 @@ export function RecipeFlow() {
   const expandedProcesses = useRecipeStore(state => state.expandedProcesses);
   const { setSelectedNodeId } = useRecipeStore();
   const { mode, isEditable } = useCollabStore();
+  const fieldConfigRevision = useFieldConfigStore(state => state.revision); // 字段配置版本号
   const reactFlowInstance = useRef<ReactFlowInstance | null>(null);
   const [layoutReady, setLayoutReady] = useState(false);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -130,14 +133,14 @@ export function RecipeFlow() {
   }, []);
   
   // 内容变化触发器 - 用于检测需要重新布局的情况
-  // 只包含影响布局的信息：工艺段ID、子步骤ID、展开状态
+  // 包含影响布局的信息：工艺段ID、子步骤ID、展开状态、字段配置版本号
   const layoutTrigger = useMemo(() => {
     const processIds = processes.map(p => p.id).join(',');
     const subStepIds = processes.flatMap(p => p.node.subSteps.map(s => s.id)).join(',');
     const expandedIds = Array.from(expandedProcesses).sort().join(',');
     
-    return `${processIds}|${subStepIds}|${expandedIds}`;
-  }, [processes, expandedProcesses]);
+    return `${processIds}|${subStepIds}|${expandedIds}|cfg:${fieldConfigRevision}`;
+  }, [processes, expandedProcesses, fieldConfigRevision]);
   
   // 添加调试日志，监控 layoutTrigger 变化（只依赖 layoutTrigger，避免引用抖动导致重复输出）
   const lastLayoutTriggerRef = useRef<string>('');
