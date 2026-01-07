@@ -1,32 +1,46 @@
 import { useMemo } from 'react';
-import { useRecipeStore } from '@/store/useRecipeStore';
-
-interface SegmentLayoutValidation {
-  parallelSegmentStats: Array<{
-    segmentId: string;
-    avgEdgeLength: number;
-    stdDeviation: number;
-    allEdgeLengths: number[];
-    minEdgeLength: number;
-    maxEdgeLength: number;
-  }>;
-  serialSegmentStats: {
-    avgEdgeLength: number;
-    stdDeviation: number;
-    allEdgeLengths: number[];
-    minEdgeLength: number;
-    maxEdgeLength: number;
-  };
-  overallStats: {
-    totalParallelEdges: number;
-    totalSerialEdges: number;
-    avgParallelEdgeLength: number;
-    avgSerialEdgeLength: number;
-  };
-}
+import { useReactFlow } from 'reactflow';
+import { useFlowEdges } from '@/store/useRecipeStore';
+import { identifyProcessSegments } from '@/hooks/segmentIdentifier';
+import { validateSegmentLayout } from '@/hooks/segmentLayoutCalculator';
 
 export function DebugStatsPanel({ enabled }: { enabled: boolean }) {
-  const layoutValidation = useRecipeStore((state) => state.layoutValidation);
+  const { getNodes } = useReactFlow();
+  const edges = useFlowEdges();
+  
+  const layoutValidation = useMemo(() => {
+    if (!enabled) return null;
+    
+    const nodes = getNodes();
+    if (nodes.length === 0) return null;
+    
+    // React Flow 11 中节点尺寸存储在 node.width 和 node.height
+    const allMeasured = nodes.every(n => n.width && n.height);
+    if (!allMeasured) return null;
+    
+    // 收集节点尺寸
+    const nodeHeights: Record<string, number> = {};
+    const nodePositions: Record<string, { x: number; y: number }> = {};
+    nodes.forEach(n => {
+      nodeHeights[n.id] = n.height || 120;
+      nodePositions[n.id] = {
+        x: n.position.x + (n.width || 200) / 2,
+        y: n.position.y + (n.height || 120) / 2
+      };
+    });
+    
+    // 识别工艺段
+    const { parallelSegments, serialSegments } = identifyProcessSegments(nodes as any, edges as any);
+    
+    // 验证布局
+    return validateSegmentLayout(
+      parallelSegments,
+      serialSegments,
+      nodePositions,
+      nodeHeights,
+      120 // TARGET_EDGE_LENGTH
+    );
+  }, [enabled, getNodes, edges]);
 
   if (!enabled || !layoutValidation) {
     return null;

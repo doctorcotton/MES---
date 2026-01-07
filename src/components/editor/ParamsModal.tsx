@@ -288,17 +288,69 @@ export function ParamsModal({ nodeId, open, onOpenChange }: ParamsModalProps) {
                   />
                 </div>
 
+
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>预计耗时</Label>
-                    <Input
-                      type="number"
-                      value={formData.estimatedDuration?.value || ''}
-                      onChange={(e) => setFormData({
-                        ...formData,
-                        estimatedDuration: { ...formData.estimatedDuration, value: Number(e.target.value), unit: 'min' }
-                      })}
-                    />
+                    <div className="flex items-center border border-input rounded-md overflow-hidden h-10">
+                      <Input
+                        type="number"
+                        min={0}
+                        className="border-0 h-full flex-1 focus-visible:ring-0 focus-visible:ring-offset-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        value={formData.estimatedDuration?.value ?? 0}
+                        onChange={(e) => {
+                          const val = Number(e.target.value);
+                          setFormData({
+                            ...formData,
+                            estimatedDuration: {
+                              ...formData.estimatedDuration,
+                              value: val < 0 ? 0 : val,
+                              unit: 'min'
+                            }
+                          });
+                        }}
+                      />
+                      <div className="flex flex-col border-l border-input">
+                        <button
+                          type="button"
+                          className="flex items-center justify-center w-8 h-5 hover:bg-gray-100 active:bg-gray-200 transition-colors"
+                          onClick={() => {
+                            const current = formData.estimatedDuration?.value ?? 0;
+                            setFormData({
+                              ...formData,
+                              estimatedDuration: {
+                                ...formData.estimatedDuration,
+                                value: current + 1,
+                                unit: 'min'
+                              }
+                            });
+                          }}
+                        >
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                          </svg>
+                        </button>
+                        <button
+                          type="button"
+                          className="flex items-center justify-center w-8 h-5 hover:bg-gray-100 active:bg-gray-200 transition-colors border-t border-input"
+                          onClick={() => {
+                            const current = formData.estimatedDuration?.value ?? 0;
+                            setFormData({
+                              ...formData,
+                              estimatedDuration: {
+                                ...formData.estimatedDuration,
+                                value: current > 0 ? current - 1 : 0,
+                                unit: 'min'
+                              }
+                            });
+                          }}
+                        >
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
                   </div>
                   <div className="space-y-2">
                     <Label>单位</Label>

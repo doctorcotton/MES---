@@ -53,10 +53,12 @@
   * {
     @apply border-border;
   }
+
   body {
     @apply bg-background text-foreground;
   }
 }
+
 
 /* ReactFlow 节点位置变化动画 */
 .react-flow__node {

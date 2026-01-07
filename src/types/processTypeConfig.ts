@@ -72,7 +72,7 @@ export const PROCESS_TYPE_FIELDS: Record<ProcessType, SubStepFieldConfig[]> = {
         { key: 'waterRatio', label: '料水比', inputType: 'waterRatio', unit: '(1:X)', defaultValue: { min: 5, max: 8 } },
         { key: 'waterVolume', label: '水量', inputType: 'conditionValue', unit: 'L' },
         { key: 'waterTemp', label: '水温', inputType: 'range', unit: '℃' },
-        { key: 'stirringTime', label: '搅拌时间', inputType: 'number', unit: 'min', required: true },
+        { key: 'stirringTime', label: '搅拌时间', inputType: 'number', unit: 'min', required: true, defaultValue: { value: 5, unit: 'min' } },
         {
             key: 'stirringRate', label: '搅拌速率', inputType: 'select', options: [
                 { value: 'high', label: '高速' },
@@ -90,7 +90,7 @@ export const PROCESS_TYPE_FIELDS: Record<ProcessType, SubStepFieldConfig[]> = {
     ],
     [ProcessType.COMPOUNDING]: [
         { key: 'stirringSpeed', label: '搅拌速度', inputType: 'conditionValue', unit: '%', required: true },
-        { key: 'stirringTime', label: '搅拌时间', inputType: 'number', unit: 'min', required: true },
+        { key: 'stirringTime', label: '搅拌时间', inputType: 'number', unit: 'min', required: true, defaultValue: { value: 5, unit: 'min' } },
         { key: 'finalTemp', label: '最终温度', inputType: 'number', unit: '℃', required: true },
     ],
     [ProcessType.FILTRATION]: [

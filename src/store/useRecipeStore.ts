@@ -5,6 +5,7 @@ import { calculateSchedule } from '../services/scheduler'; // calculateSchedule 
 import { ScheduleResult } from '../types/scheduling'; // ScheduleResult is a type definition
 import { defaultDevicePool } from '../data/devicePool';
 import { useMemo } from 'react';
+import { socketService } from '../services/socketService';
 
 interface RecipeStore {
   // 主数据结构：工艺段列表
@@ -22,34 +23,6 @@ interface RecipeStore {
 
   // 展开/折叠状态管理（用于流程图）
   expandedProcesses: Set<string>; // 记录哪些工艺段在流程图中展开显示子步骤
-
-  // 节点位置缓存（用于流程图布局）
-  nodePositions: Record<string, { x: number; y: number }>; // 缓存计算好的节点位置
-  nodeHeights: Record<string, number>; // 缓存计算好的节点高度（用于调试）
-  nodeWidths: Record<string, number>; // 缓存计算好的节点宽度（用于调试）
-  layoutValidation: {
-    parallelSegmentStats: Array<{
-      segmentId: string;
-      avgEdgeLength: number;
-      stdDeviation: number;
-      allEdgeLengths: number[];
-      minEdgeLength: number;
-      maxEdgeLength: number;
-    }>;
-    serialSegmentStats: {
-      avgEdgeLength: number;
-      stdDeviation: number;
-      allEdgeLengths: number[];
-      minEdgeLength: number;
-      maxEdgeLength: number;
-    };
-    overallStats: {
-      totalParallelEdges: number;
-      totalSerialEdges: number;
-      avgParallelEdgeLength: number;
-      avgSerialEdgeLength: number;
-    };
-  } | null; // 布局验证结果（用于调试）
 
   // Process操作
   addProcess: (process: Process) => void;
@@ -88,34 +61,6 @@ interface RecipeStore {
   syncFromServer: (schema: RecipeSchema, version: number) => void;
   setSaving: (saving: boolean) => void;
   saveToServer: (userId?: string) => Promise<boolean>;
-
-  // Layout
-  setNodePositions: (positions: Record<string, { x: number; y: number }>) => void;
-  setNodeHeights: (heights: Record<string, number>) => void;
-  setNodeWidths: (widths: Record<string, number>) => void;
-  setLayoutValidation: (validation: {
-    parallelSegmentStats: Array<{
-      segmentId: string;
-      avgEdgeLength: number;
-      stdDeviation: number;
-      allEdgeLengths: number[];
-      minEdgeLength: number;
-      maxEdgeLength: number;
-    }>;
-    serialSegmentStats: {
-      avgEdgeLength: number;
-      stdDeviation: number;
-      allEdgeLengths: number[];
-      minEdgeLength: number;
-      maxEdgeLength: number;
-    };
-    overallStats: {
-      totalParallelEdges: number;
-      totalSerialEdges: number;
-      avgParallelEdgeLength: number;
-      avgSerialEdgeLength: number;
-    };
-  } | null) => void;
 }
 
 export const useRecipeStore = create<RecipeStore>((set, get) => ({
@@ -131,10 +76,6 @@ export const useRecipeStore = create<RecipeStore>((set, get) => ({
   version: 1,
   isSaving: false,
   expandedProcesses: new Set(initialProcesses.map(p => p.id)), // 默认全部展开
-  nodePositions: {}, // 节点位置缓存
-  nodeHeights: {}, // 节点高度缓存
-  nodeWidths: {}, // 节点宽度缓存
-  layoutValidation: null, // 布局验证结果
 
   // Process操作
   addProcess: (process) => {
@@ -522,22 +463,6 @@ export const useRecipeStore = create<RecipeStore>((set, get) => ({
     set({ isSaving });
   },
 
-  setNodePositions: (positions) => {
-    set({ nodePositions: positions });
-  },
-
-  setNodeHeights: (heights) => {
-    set({ nodeHeights: heights });
-  },
-
-  setNodeWidths: (widths) => {
-    set({ nodeWidths: widths });
-  },
-
-  setLayoutValidation: (validation) => {
-    set({ layoutValidation: validation });
-  },
-
   saveToServer: async (userId?: string) => {
     const state = get();
     state.setSaving(true);
@@ -569,11 +494,15 @@ export const useRecipeStore = create<RecipeStore>((set, get) => ({
         version: state.version,
       };
 
+      // 获取 socketId，用于服务端排除提交者
+      const socketId = socketService.getSocket()?.id || null;
+      
       const response = await fetch('http://localhost:3001/api/recipe', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userId,
+          socketId, // 携带 socketId，服务端用于排除提交者
           recipeData,
         }),
       });
@@ -620,7 +549,6 @@ export const useRecipeStore = create<RecipeStore>((set, get) => ({
 export const useFlowNodes = (): FlowNode[] => {
   const processes = useRecipeStore((state) => state.processes);
   const expandedProcesses = useRecipeStore((state) => state.expandedProcesses);
-  const nodePositions = useRecipeStore((state) => state.nodePositions);
   const flowEdges = useFlowEdges();
 
   return useMemo(() => {
@@ -636,7 +564,9 @@ export const useFlowNodes = (): FlowNode[] => {
           tempNodes.push({
             id: subStep.id,
             type: 'subStepNode',
-            position: { ...(nodePositions[subStep.id] || { x: 0, y: 0 }) },
+            // 设置默认位置 (0, 0)，React Flow 需要 position 属性才能初始化
+            // LayoutController 会立即更新为正确的位置
+            position: { x: 0, y: 0 },
             data: {
               subStep,
               processId: process.id,
@@ -648,7 +578,9 @@ export const useFlowNodes = (): FlowNode[] => {
         tempNodes.push({
           id: process.id,
           type: 'processSummaryNode',
-          position: { ...(nodePositions[process.id] || { x: 0, y: 0 }) },
+          // 设置默认位置 (0, 0)，React Flow 需要 position 属性才能初始化
+          // LayoutController 会立即更新为正确的位置
+          position: { x: 0, y: 0 },
           data: {
             processId: process.id,
             processName: process.name,
@@ -704,7 +636,7 @@ export const useFlowNodes = (): FlowNode[] => {
     });
 
     return nodes;
-  }, [processes, expandedProcesses, nodePositions, flowEdges]);
+  }, [processes, expandedProcesses, flowEdges]);
 };
 
 /**
@@ -714,7 +646,6 @@ export const useFlowEdges = (): RecipeEdge[] => {
   const processes = useRecipeStore((state) => state.processes);
   const edges = useRecipeStore((state) => state.edges);
   const expandedProcesses = useRecipeStore((state) => state.expandedProcesses);
-  const nodePositions = useRecipeStore((state) => state.nodePositions);
 
   return useMemo(() => {
     const flowEdges: RecipeEdge[] = [];
@@ -807,22 +738,9 @@ export const useFlowEdges = (): RecipeEdge[] => {
       let sourceHandle: string | undefined;
 
       if (outgoingEdges.length > 1) {
-        // Sort outgoing edges by target node's X position (left to right)
+        // Sort outgoing edges by target node's process index
         const sortedOutEdges = [...outgoingEdges].sort((a, b) => {
-          // 优先使用 nodePositions 中的 X 坐标排序
-          const posA = nodePositions[a.target];
-          const posB = nodePositions[b.target];
-
-          if (posA && posB) {
-            // 按 X 坐标排序（左 -> 右）
-            if (Math.abs(posA.x - posB.x) > 1) {
-              return posA.x - posB.x;
-            }
-            // X 坐标接近时按 Y 坐标排序
-            return posA.y - posB.y;
-          }
-
-          // 降级：使用 process index 排序
+          // 使用 process index 排序
           const getSortKey = (nodeId: string): number => {
             const pIndex = processes.findIndex(p => p.id === nodeId);
             if (pIndex >= 0) return pIndex * 1000;
@@ -850,13 +768,20 @@ export const useFlowEdges = (): RecipeEdge[] => {
         }
       }
 
+      // 添加 incomingTotal 用于走廊路由判断
+      const incomingTotal = incomingEdges.length;
+
       return {
         ...edge,
+        data: {
+          ...edge.data,
+          incomingTotal,
+        },
         targetHandle,
         sourceHandle,
       };
     });
-  }, [processes, edges, expandedProcesses, nodePositions]);
+  }, [processes, edges, expandedProcesses]);
 };
 
 /**

@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useEffect, useRef } from 'react';
 import { useReactFlow, Edge } from 'reactflow';
 import { useFlowNodes, useFlowEdges } from '@/store/useRecipeStore';
 import { useRecipeStore } from '@/store/useRecipeStore';
@@ -30,12 +30,8 @@ interface DebugLabel {
  * 显示连线长度、节点间距等调试信息
  */
 export function DebugOverlay({ enabled }: { enabled: boolean }) {
-  const { getNodes, getEdges, getViewport } = useReactFlow();
-  const nodes = useFlowNodes();
+  const { getNodes, getViewport } = useReactFlow();
   const edges = useFlowEdges();
-  const nodePositions = useRecipeStore((state) => state.nodePositions);
-  const nodeHeights = useRecipeStore((state) => state.nodeHeights);
-  const nodeWidths = useRecipeStore((state) => state.nodeWidths);
 
   // 计算调试标签
   const debugLabels = useMemo((): DebugLabel[] => {
@@ -43,29 +39,29 @@ export function DebugOverlay({ enabled }: { enabled: boolean }) {
 
     const labels: DebugLabel[] = [];
     const targetEdgeLength = 120; // 目标连线长度
+    
+    // 从 React Flow 获取包含真实尺寸的节点
+    const nodes = getNodes();
 
     edges.forEach(edge => {
       const sourceNode = nodes.find(n => n.id === edge.source);
       const targetNode = nodes.find(n => n.id === edge.target);
       
       if (!sourceNode || !targetNode) return;
-
-      const sourcePos = nodePositions[sourceNode.id];
-      const targetPos = nodePositions[targetNode.id];
       
-      if (!sourcePos || !targetPos) return;
-
-      // 从 store 获取节点高度和宽度，如果没有则使用默认值
-      const sourceHeight = nodeHeights[sourceNode.id] || 120;
-      const targetHeight = nodeHeights[targetNode.id] || 120;
-      const sourceWidth = nodeWidths[sourceNode.id] || 200;
-      const targetWidth = nodeWidths[targetNode.id] || 200;
-
-      // nodePositions 存储的是左上角坐标，需要转换为中心坐标
-      const sourceCenterX = sourcePos.x + sourceWidth / 2;
-      const sourceCenterY = sourcePos.y + sourceHeight / 2;
-      const targetCenterX = targetPos.x + targetWidth / 2;
-      const targetCenterY = targetPos.y + targetHeight / 2;
+      // React Flow 11 中节点尺寸存储在 node.width 和 node.height
+      if (!sourceNode.width || !targetNode.width) return;
+      
+      const sourceHeight = sourceNode.height!;
+      const targetHeight = targetNode.height!;
+      const sourceWidth = sourceNode.width!;
+      const targetWidth = targetNode.width!;
+      
+      // position 是左上角坐标，计算中心坐标
+      const sourceCenterX = sourceNode.position.x + sourceWidth / 2;
+      const sourceCenterY = sourceNode.position.y + sourceHeight / 2;
+      const targetCenterX = targetNode.position.x + targetWidth / 2;
+      const targetCenterY = targetNode.position.y + targetHeight / 2;
 
       // 计算实际连线长度
       // 连线长度 = 目标节点顶部Y - 源节点底部Y
@@ -107,52 +103,74 @@ export function DebugOverlay({ enabled }: { enabled: boolean }) {
       });
     });
 
-    // 输出验证日志
-    if (enabled && labels.length > 0) {
-      console.group('[Debug] 连线长度验证');
-      labels.forEach(label => {
-        const status = label.color === 'green' ? '✅' : 
-                       label.color === 'yellow' ? '⚠️' : '❌';
-        console.log(`${status} ${label.sourceId} → ${label.targetId}:`, 
-          '实际', label.value.toFixed(1), 
-          '目标', label.target, 
-          '误差', label.error.toFixed(1),
-          '| 源底', label.sourceBottom.toFixed(1),
-          '目标顶', label.targetTop.toFixed(1),
-          '| H₁', label.sourceHeight, 'H₂', label.targetHeight);
-      });
-      console.groupEnd();
+    return labels;
+  }, [enabled, edges, getNodes]);
+
+  // 输出验证日志（在 effect 中，避免 StrictMode 重复输出）
+  const lastSignatureRef = useRef<string>('');
+  useEffect(() => {
+    if (!enabled || debugLabels.length === 0) {
+      lastSignatureRef.current = '';
+      return;
     }
 
-    return labels;
-  }, [enabled, edges, nodes, nodePositions, nodeHeights, nodeWidths]);
+    // 生成签名用于去重（避免 StrictMode 下重复输出）
+    const signature = debugLabels
+      .map(l => `${l.sourceId}→${l.targetId}:${l.value.toFixed(1)}`)
+      .sort()
+      .join('|');
+    
+    // 如果签名相同，跳过输出（避免重复）
+    if (signature === lastSignatureRef.current) {
+      return;
+    }
+    
+    lastSignatureRef.current = signature;
+
+    // 输出验证日志
+    console.group('[Debug] 连线长度验证');
+    debugLabels.forEach(label => {
+      const status = label.color === 'green' ? '✅' : 
+                     label.color === 'yellow' ? '⚠️' : '❌';
+      console.log(`${status} ${label.sourceId} → ${label.targetId}:`, 
+        '实际', label.value.toFixed(1), 
+        '目标', label.target, 
+        '误差', label.error.toFixed(1),
+        '| 源底', label.sourceBottom.toFixed(1),
+        '目标顶', label.targetTop.toFixed(1),
+        '| H₁', label.sourceHeight, 'H₂', label.targetHeight);
+    });
+    console.groupEnd();
+  }, [enabled, debugLabels]);
 
   // 计算节点调试信息
   const nodeDebugInfos = useMemo(() => {
     if (!enabled) return [];
     
+    const nodes = getNodes();
+    
     return nodes.map(node => {
-      const pos = nodePositions[node.id];
-      if (!pos) return null;
+      // React Flow 11 中节点尺寸存储在 node.width 和 node.height
+      if (!node.width) return null;
       
-      const height = nodeHeights[node.id] || 120;
-      const width = nodeWidths[node.id] || 200;
-      const centerX = pos.x + width / 2;
-      const centerY = pos.y + height / 2;
+      const height = node.height!;
+      const width = node.width!;
+      const centerX = node.position.x + width / 2;
+      const centerY = node.position.y + height / 2;
       
       return {
         id: node.id,
-        x: pos.x + width, // 右上角
-        y: pos.y,
+        x: node.position.x + width, // 右上角
+        y: node.position.y,
         width,
         height,
         centerX,
         centerY,
-        topY: pos.y,
-        bottomY: pos.y + height,
+        topY: node.position.y,
+        bottomY: node.position.y + height,
       };
     }).filter((info): info is NonNullable<typeof info> => info !== null);
-  }, [enabled, nodes, nodePositions, nodeHeights, nodeWidths]);
+  }, [enabled, getNodes]);
 
   // 获取视口变换
   const viewport = getViewport();

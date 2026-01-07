@@ -2,44 +2,6 @@ import { db } from '../db';
 import { v4 as uuidv4 } from 'uuid';
 import { ProcessType } from '../../../src/types/recipe';
 
-// 需要在此处复制配置以避免在后端执行上下文中从前端代码导入
-// 如果出现 ts-node/commonjs 问题。但由于这是迁移脚本，我们可能只想复制结构。
-
-// ProcessType 映射：旧的大写格式 -> 新的小写格式
-const PROCESS_TYPE_MIGRATION: Record<string, string> = {
-    'DISSOLUTION': 'dissolution',
-    'COMPOUNDING': 'compounding',
-    'FILTRATION': 'filtration',
-    'TRANSFER': 'transfer',
-    'FLAVOR_ADDITION': 'flavorAddition',
-    'OTHER': 'other'
-};
-
-/**
- * 迁移现有数据库中的 processType 值从大写改为小写
- * 这确保与前端 ProcessType 枚举值匹配
- */
-function migrateProcessTypes() {
-    console.log('检查是否需要迁移 processType 值...');
-    
-    let migratedCount = 0;
-    const updateStmt = db.prepare('UPDATE process_field_configs SET process_type = ? WHERE process_type = ?');
-    
-    Object.entries(PROCESS_TYPE_MIGRATION).forEach(([oldValue, newValue]) => {
-        const result = updateStmt.run(newValue, oldValue);
-        if (result.changes > 0) {
-            migratedCount += result.changes;
-            console.log(`  迁移 ${result.changes} 条记录: ${oldValue} -> ${newValue}`);
-        }
-    });
-    
-    if (migratedCount > 0) {
-        console.log(`✓ 完成 processType 迁移，共迁移 ${migratedCount} 条记录\n`);
-    } else {
-        console.log('✓ processType 值已是最新格式，无需迁移\n');
-    }
-}
-
 // 将现有字段映射到数据库结构
 // 注意：processType 键必须与 ProcessType 枚举值匹配（小写）
 const PROCESS_TYPE_FIELDS: Record<string, any[]> = {
@@ -53,13 +15,7 @@ const PROCESS_TYPE_FIELDS: Record<string, any[]> = {
         { key: 'waterRatio', label: '料水比', inputType: 'waterRatio', unit: '(1:X)', defaultValue: { min: 5, max: 8 }, displayCondition: { field: 'waterVolumeMode', operator: '==', value: 'ratio' } },
         { key: 'waterVolume', label: '水量', inputType: 'conditionValue', unit: 'L', displayCondition: { field: 'waterVolumeMode', operator: '==', value: 'fixed' } },
         { key: 'waterTemp', label: '水温', inputType: 'range', unit: '℃' },
-        {
-            key: 'stirringTime', label: '搅拌时间', inputType: 'object', validation: { required: true },
-            fields: [
-                { id: uuidv4(), key: 'value', label: '时间', inputType: 'number', unit: 'min', validation: { required: true } },
-                { id: uuidv4(), key: 'unit', label: '单位', inputType: 'text', defaultValue: 'min', enabled: false }
-            ]
-        },
+        { key: 'stirringTime', label: '搅拌时间', inputType: 'number', unit: 'min', validation: { required: true } },
         {
             key: 'stirringRate', label: '搅拌速率', inputType: 'select', options: [
                 { value: 'high', label: '高速' },
@@ -87,13 +43,7 @@ const PROCESS_TYPE_FIELDS: Record<string, any[]> = {
             ]
         },
         { key: 'stirringSpeed', label: '搅拌速度', inputType: 'conditionValue', unit: '%', validation: { required: true } },
-        {
-            key: 'stirringTime', label: '搅拌时间', inputType: 'object', validation: { required: true },
-            fields: [
-                { id: uuidv4(), key: 'value', label: '时间', inputType: 'number', unit: 'min', validation: { required: true } },
-                { id: uuidv4(), key: 'unit', label: '单位', inputType: 'text', defaultValue: 'min', enabled: false }
-            ]
-        },
+        { key: 'stirringTime', label: '搅拌时间', inputType: 'number', unit: 'min', validation: { required: true } },
         {
             key: 'finalTemp', label: '最终温度', inputType: 'object', validation: { required: true },
             fields: [
@@ -133,9 +83,6 @@ const PROCESS_TYPE_FIELDS: Record<string, any[]> = {
 export function syncDefaultFields() {
     console.log('===== 开始同步默认字段配置 =====');
 
-    // 首先执行 processType 迁移（如果有旧数据）
-    migrateProcessTypes();
-
     // 查询现有所有系统字段，建立索引
     const existingFields = db.prepare(`
         SELECT id, process_type, key, is_system 
@@ -152,9 +99,9 @@ export function syncDefaultFields() {
 
     console.log(`数据库中已有 ${existingFields.length} 个系统字段配置`);
 
-    // 准备 INSERT OR REPLACE 语句
+    // 准备 UPSERT 语句（使用 ON CONFLICT 而不是 INSERT OR REPLACE）
     const upsert = db.prepare(`
-        INSERT OR REPLACE INTO process_field_configs (
+        INSERT INTO process_field_configs (
             id, process_type, key, label, input_type, unit, options, 
             default_value, validation, display_condition, sort_order, 
             is_system, enabled, created_at, updated_at,
@@ -165,6 +112,25 @@ export function syncDefaultFields() {
             @isSystem, @enabled, @createdAt, @updatedAt,
             @itemConfig, @itemFields, @fields, @minItems, @maxItems
         )
+        ON CONFLICT(process_type, key) DO UPDATE SET
+            id = excluded.id,
+            label = excluded.label,
+            input_type = excluded.input_type,
+            unit = excluded.unit,
+            options = excluded.options,
+            default_value = excluded.default_value,
+            validation = excluded.validation,
+            display_condition = excluded.display_condition,
+            sort_order = excluded.sort_order,
+            is_system = excluded.is_system,
+            enabled = excluded.enabled,
+            updated_at = excluded.updated_at,
+            item_config = excluded.item_config,
+            item_fields = excluded.item_fields,
+            fields = excluded.fields,
+            min_items = excluded.min_items,
+            max_items = excluded.max_items
+        -- 注意：created_at 不在 UPDATE 中，因此保留原值
     `);
 
     const transaction = db.transaction((fields: any[]) => {
@@ -212,13 +178,13 @@ export function syncDefaultFields() {
                 sortOrder: index,
                 isSystem: 1,
                 enabled: 1,
-                createdAt: existingId ? existingFields.find(f => f.id === existingId) : now, // 保留原创建时间
+                createdAt: now, // 新增时使用 now，更新时由 SQL 保留原值（不在 UPDATE 子句中）
                 updatedAt: now,
                 itemConfig: field.itemConfig ? JSON.stringify(field.itemConfig) : null,
                 itemFields: field.itemFields ? JSON.stringify(field.itemFields) : null,
                 fields: field.fields ? JSON.stringify(field.fields) : null,
-                minItems: field.minItems || null,
-                maxItems: field.maxItems || null
+                minItems: field.minItems ?? null,
+                maxItems: field.maxItems ?? null
             });
         });
     });

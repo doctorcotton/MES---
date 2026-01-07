@@ -136,9 +136,15 @@ const SubStepParamsDisplay = ({ subStep, inputSources }: { subStep: SubStep, inp
         displayValue = value.join(', ');
       }
     } else {
-      // 文本、数字
-      displayValue = String(value);
-      if (config.unit) displayValue += config.unit;
+      // 文本、数字 - 处理可能是 {value, unit} 结构的情况
+      if (typeof value === 'object' && value !== null && 'value' in value) {
+        displayValue = String(value.value);
+        if (value.unit) displayValue += value.unit;
+        else if (config.unit) displayValue += config.unit;
+      } else {
+        displayValue = String(value);
+        if (config.unit) displayValue += config.unit;
+      }
     }
 
     return displayValue;
@@ -194,7 +200,7 @@ export const CustomNode = memo(({ id, data, selected, type }: NodeProps<CustomNo
   // 获取输出边数量 - 排除内部边（internal-），它们使用默认的中心 handle
   const outgoingEdges = flowEdges.filter(edge => edge.source === id && !edge.id.startsWith('internal-'));
   const outgoingCount = outgoingEdges.length;
-  
+
   // 调试日志：验证 outgoingCount 计算
   if (process.env.NODE_ENV === 'development' && outgoingCount > 1) {
     console.log(`[CustomNode] Node ${id}: outgoingCount=${outgoingCount}, outgoingEdges:`, outgoingEdges.map(e => ({ id: e.id, target: e.target, sourceHandle: e.sourceHandle })));

@@ -1,10 +1,82 @@
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 import {
   EdgeProps,
   getSmoothStepPath,
   EdgeLabelRenderer,
   BaseEdge,
 } from 'reactflow';
+
+// 走廊路由参数
+const CORRIDOR_CLEARANCE_PX = 60; // 走廊距离目标节点的净空
+const MIN_TARGET_CLEARANCE_PX = 24; // 最小目标节点净空
+const MIN_SOURCE_DROP_PX = 12; // 最小源节点下降距离
+const CORNER_RADIUS = 20; // 拐角圆角半径
+
+/**
+ * 生成走廊路径（三段式：垂直-水平-垂直）
+ * 用于多入边汇入同一节点时，避免连线交叉
+ */
+function generateCorridorPath(
+  sourceX: number,
+  sourceY: number,
+  targetX: number,
+  targetY: number
+): string {
+  // 计算走廊Y坐标
+  let corridorY = targetY - CORRIDOR_CLEARANCE_PX;
+  
+  // 夹紧条件1：确保走廊不压住目标节点
+  const minCorridorY = targetY - MIN_TARGET_CLEARANCE_PX;
+  corridorY = Math.min(corridorY, minCorridorY);
+  
+  // 夹紧条件2：确保有足够的下降距离
+  const minSourceY = sourceY + MIN_SOURCE_DROP_PX;
+  corridorY = Math.max(corridorY, minSourceY);
+  
+  // 如果源点已经在目标点下方，使用简单的垂直路径
+  if (sourceY >= targetY) {
+    return `M ${sourceX} ${sourceY} L ${targetX} ${targetY}`;
+  }
+  
+  // 计算水平移动方向
+  const horizontalDistance = Math.abs(targetX - sourceX);
+  
+  // 如果水平距离很小，使用简单的垂直路径
+  if (horizontalDistance < CORNER_RADIUS * 2) {
+    return `M ${sourceX} ${sourceY} L ${targetX} ${targetY}`;
+  }
+  
+  // 生成三段式路径（带圆角）
+  // 1. 从源点垂直下降到走廊（留出圆角空间）
+  const verticalDropEndY = corridorY - CORNER_RADIUS;
+  
+  // 2. 圆角过渡到水平段
+  // 如果目标在右侧，圆角向右；如果目标在左侧，圆角向左
+  const isTargetRight = targetX > sourceX;
+  const cornerX1 = isTargetRight 
+    ? sourceX + CORNER_RADIUS 
+    : sourceX - CORNER_RADIUS;
+  
+  // 3. 水平移动到目标X附近（留出圆角空间）
+  const cornerX2 = isTargetRight 
+    ? targetX - CORNER_RADIUS 
+    : targetX + CORNER_RADIUS;
+  
+  // 4. 圆角过渡到垂直段
+  const verticalRiseStartY = corridorY + CORNER_RADIUS;
+  
+  // 构建完整路径
+  const path = [
+    `M ${sourceX} ${sourceY}`,                    // 起点
+    `L ${sourceX} ${verticalDropEndY}`,           // 垂直下降
+    `Q ${sourceX} ${corridorY} ${cornerX1} ${corridorY}`, // 圆角1
+    `L ${cornerX2} ${corridorY}`,                 // 水平移动
+    `Q ${targetX} ${corridorY} ${targetX} ${verticalRiseStartY}`, // 圆角2
+    `L ${targetX} ${targetY}`,                    // 垂直上升
+  ].join(' ');
+  
+  return path;
+}
 
 export const SequenceEdge = memo(
   ({
@@ -18,15 +90,29 @@ export const SequenceEdge = memo(
     data,
     markerEnd,
   }: EdgeProps) => {
-    const [edgePath] = getSmoothStepPath({
-      sourceX,
-      sourceY,
-      sourcePosition,
-      targetX,
-      targetY,
-      targetPosition,
-      borderRadius: 20,
-    });
+    // 判断是否使用走廊路由
+    const incomingTotal = data?.incomingTotal;
+    const useCorridor = incomingTotal !== undefined && incomingTotal > 1;
+    
+    // 根据路由模式生成路径
+    const edgePath = useMemo(() => {
+      if (useCorridor) {
+        // 使用走廊路径
+        return generateCorridorPath(sourceX, sourceY, targetX, targetY);
+      } else {
+        // 使用默认平滑路径
+        const [path] = getSmoothStepPath({
+          sourceX,
+          sourceY,
+          sourcePosition,
+          targetX,
+          targetY,
+          targetPosition,
+          borderRadius: 20,
+        });
+        return path;
+      }
+    }, [useCorridor, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition]);
 
     // 计算靠近终点 (Target) 的位置
     // badgeX 必须精确等于 targetX (锚点 X 坐标)

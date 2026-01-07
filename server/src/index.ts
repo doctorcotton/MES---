@@ -75,7 +75,7 @@ app.post('/api/recipe/release-lock', (req, res) => {
 });
 
 app.put('/api/recipe', (req, res) => {
-  const { userId, recipeData } = req.body;
+  const { userId, socketId, recipeData } = req.body;
   if (!userId || !recipeData) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
@@ -88,8 +88,14 @@ app.put('/api/recipe', (req, res) => {
   const success = updateRecipe('default', recipeData, userId);
   if (success) {
     const updated = getRecipe();
-    // 广播更新（除发送者外）
-    io.emit('recipe:updated', updated);
+    // 广播更新（排除提交者，避免提交者收到自己刚保存的数据导致引用抖动）
+    if (socketId) {
+      // 如果提供了 socketId，只广播给其他客户端
+      io.except(socketId).emit('recipe:updated', updated);
+    } else {
+      // 如果没有 socketId（向后兼容），广播给所有人
+      io.emit('recipe:updated', updated);
+    }
     res.json({ success: true, recipe: updated });
   } else {
     res.status(409).json({ error: 'Version conflict or update failed' });

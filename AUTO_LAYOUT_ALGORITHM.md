@@ -3,14 +3,17 @@
 ## 目录
 
 1. [概述](#概述)
-2. [技术路线](#技术路线)
-3. [算法架构](#算法架构)
-4. [核心算法详解](#核心算法详解)
-5. [精确高度计算](#精确高度计算)
-6. [调试模式](#调试模式)
-7. [数据存储格式](#数据存储格式)
-8. [代码实现细节](#代码实现细节)
-9. [性能优化](#性能优化)
+2. [实现状态总览](#实现状态总览)
+3. [技术路线](#技术路线)
+4. [算法架构](#算法架构)
+5. [核心算法详解](#核心算法详解)
+6. [节点尺寸计算](#节点尺寸计算)
+7. [精确高度计算](#精确高度计算)
+8. [调试模式](#调试模式)
+9. [数据存储格式](#数据存储格式)
+10. [代码实现细节](#代码实现细节)
+11. [性能优化](#性能优化)
+12. [实现状态说明](#实现状态说明)
 
 ---
 
@@ -23,11 +26,31 @@
 - ✅ **工艺段自动识别**：自动识别并行工艺段和串行工艺段
 - ✅ **分段布局计算**：并行段和串行段采用不同的布局策略
 - ✅ **固定连线长度**：确保所有连线长度统一（目标值：120px）
-- ✅ **精确高度计算**：使用 Canvas API 精确测量文字高度，误差 < 2px
-- ✅ **智能节点尺寸**：根据输入数量和内容动态计算节点宽高
+- ⚠️ **节点尺寸计算**：使用 React Flow 自动测量的真实尺寸（非 Canvas API）
+- ✅ **分档宽度策略**：根据输入数量动态计算节点宽度（在 CustomNode 中实现）
 - ✅ **水平对齐优化**：基于 `displayOrder` 的水平对齐
 - ✅ **汇聚点智能居中**：多输入节点的加权居中算法
 - ✅ **调试模式**：可视化显示连线长度和误差，快速定位布局问题
+
+---
+
+## 实现状态总览
+
+| 功能模块 | 实现状态 | 说明 |
+|---------|---------|------|
+| **工艺段识别** | ✅ 已实现 | `segmentIdentifier.ts` - 使用 DFS 算法识别并行/串行段 |
+| **并行段布局** | ✅ 已实现 | `layoutParallelSegments` - 固定连线长度 120px |
+| **串行段布局** | ✅ 已实现 | `layoutSerialSegments` - 从汇聚点向下排列 |
+| **汇聚点Y坐标计算** | ✅ 已实现 | `calculateConvergenceY` - 支持 max/weighted/median 策略 |
+| **汇聚点X坐标居中** | ✅ 已实现 | 加权质心算法，基于子树规模 |
+| **基于 displayOrder 的水平布局** | ✅ 已实现 | 每个 Process 分配一个水平车道 |
+| **分档宽度计算** | ✅ 已实现 | `CustomNode.tsx` 中的 `getTieredWidth` 函数 |
+| **节点尺寸获取** | ✅ 已实现 | 使用 React Flow 自动测量的 `node.width` 和 `node.height` |
+| **调试模式** | ✅ 已实现 | `DebugOverlay.tsx` 和 `DebugStatsPanel.tsx` |
+| **Canvas API 文字测量** | ❌ 未实现 | 文档中描述但代码中不存在 |
+| **智能统一尺寸** | ❌ 未实现 | 文档中描述但代码中不存在 |
+| **分支重排序** | ❌ 未实现 | 文档中描述但代码中不存在 |
+| **并行分支压缩** | ❌ 未实现 | 文档中描述但代码中不存在 |
 
 ---
 
@@ -37,29 +60,32 @@
 
 | 技术 | 版本 | 用途 |
 |------|------|------|
-| **React Flow** | 11.11.0 | 流程图渲染引擎 |
-| **Dagre** | 0.8.5 | 基础图形布局算法（用于初始水平布局） |
+| **React Flow** | 11.11.0 | 流程图渲染引擎（提供节点尺寸自动测量） |
 | **TypeScript** | 5.2.2 | 类型安全 |
 | **Zustand** | 4.5.0 | 状态管理 |
-| **React Hooks** | - | 响应式布局计算 |
+| **React Hooks** | - | 响应式布局计算（useLayoutEffect, useNodesInitialized） |
+
+**注意**：文档中提到的 Dagre 库未在代码中使用。水平布局直接基于 `displayOrder` 计算，不依赖图形布局算法库。
 
 ### 算法流程
 
 ```mermaid
 flowchart TD
-    A[开始布局计算] --> B[识别工艺段]
-    B --> C{是否使用工艺段布局?}
-    C -->|是| D[并行段布局]
-    C -->|否| E[Dagre基础布局]
-    D --> F[计算汇聚点Y坐标]
-    F --> G[串行段布局]
-    G --> H[计算节点尺寸]
-    H --> I[水平对齐优化]
-    I --> J[汇聚点居中]
-    J --> K[压缩并行分支]
-    K --> L[保存位置到Store]
-    E --> H
-    L --> M[结束]
+    A[开始布局计算] --> B[等待节点初始化]
+    B --> C{节点尺寸已测量?}
+    C -->|否| B
+    C -->|是| D[收集节点真实尺寸]
+    D --> E[识别工艺段]
+    E --> F[基于displayOrder分配X坐标]
+    F --> G[布局并行段Y坐标]
+    G --> H[计算汇聚点Y坐标]
+    H --> I[计算汇聚点X坐标加权居中]
+    I --> J[布局串行段Y坐标]
+    J --> K[应用X坐标到串行段]
+    K --> L[转换为左上角坐标]
+    L --> M[更新节点位置]
+    M --> N[调用fitView]
+    N --> O[结束]
 ```
 
 ---
@@ -69,39 +95,55 @@ flowchart TD
 ### 模块划分
 
 ```
+src/components/graph/
+├── LayoutController.tsx      # 主布局控制器（入口，Headless Component）
+├── RecipeFlow.tsx            # React Flow 组件（集成布局控制器）
+├── DebugOverlay.tsx          # 调试叠加层组件
+└── DebugStatsPanel.tsx       # 调试统计面板
+
 src/hooks/
-├── useAutoLayout.ts          # 主布局钩子（入口）
 ├── segmentIdentifier.ts      # 工艺段识别算法
 └── segmentLayoutCalculator.ts # 分段布局计算器
+
+src/components/graph/
+└── CustomNode.tsx            # 自定义节点组件（包含分档宽度计算）
 ```
 
 ### 数据流
 
 ```mermaid
 sequenceDiagram
-    participant Store as RecipeStore
-    participant Hook as useAutoLayout
+    participant RecipeFlow as RecipeFlow
+    participant LayoutCtrl as LayoutController
+    participant ReactFlow as React Flow
     participant Identifier as segmentIdentifier
     participant Calculator as segmentLayoutCalculator
-    participant Dagre as Dagre Graph
-    participant ReactFlow as React Flow
 
-    Store->>Hook: 节点/边数据变化
-    Hook->>Identifier: 识别工艺段
-    Identifier-->>Hook: 并行段 + 串行段
-    Hook->>Calculator: 布局并行段
-    Calculator-->>Hook: 并行段Y坐标
-    Hook->>Calculator: 计算汇聚点Y
-    Calculator-->>Hook: 汇聚点Y坐标
-    Hook->>Calculator: 布局串行段
-    Calculator-->>Hook: 串行段Y坐标
-    Hook->>Dagre: 计算初始水平布局
-    Dagre-->>Hook: 初始X坐标
-    Hook->>Hook: 水平对齐优化
-    Hook->>Hook: 汇聚点居中
-    Hook->>Store: 保存最终位置
-    Store->>ReactFlow: 更新节点位置
+    RecipeFlow->>LayoutCtrl: 内容变化触发布局
+    LayoutCtrl->>ReactFlow: 等待节点初始化（useNodesInitialized）
+    ReactFlow-->>LayoutCtrl: 节点尺寸已测量（node.width, node.height）
+    LayoutCtrl->>Identifier: 识别工艺段
+    Identifier-->>LayoutCtrl: 并行段 + 串行段
+    LayoutCtrl->>Calculator: 布局并行段
+    Calculator-->>LayoutCtrl: 并行段Y坐标
+    LayoutCtrl->>Calculator: 计算汇聚点Y
+    Calculator-->>LayoutCtrl: 汇聚点Y坐标
+    LayoutCtrl->>LayoutCtrl: 基于 displayOrder 分配X坐标
+    LayoutCtrl->>LayoutCtrl: 计算汇聚点X坐标（加权居中）
+    LayoutCtrl->>Calculator: 布局串行段
+    Calculator-->>LayoutCtrl: 串行段Y坐标
+    LayoutCtrl->>LayoutCtrl: 转换为左上角坐标
+    LayoutCtrl->>ReactFlow: 更新节点位置（setNodes）
+    LayoutCtrl->>ReactFlow: 调用 fitView
+    LayoutCtrl->>RecipeFlow: 通知布局完成
 ```
+
+### 关键设计决策
+
+1. **Headless Component 模式**：`LayoutController` 不渲染任何 UI，仅负责布局计算
+2. **等待节点尺寸测量**：使用 React Flow 的 `useNodesInitialized` 确保节点尺寸已测量
+3. **坐标系统**：内部使用中心点坐标计算，最后转换为左上角坐标（React Flow 要求）
+4. **布局触发**：基于内容变化触发器（`layoutTrigger`），包含工艺段ID、子步骤ID、展开状态
 
 ---
 
@@ -307,169 +349,80 @@ export function layoutSerialSegments(
 
 ---
 
-### 3. 节点尺寸计算 (`useAutoLayout.ts`)
+## 节点尺寸计算
 
-#### 3.1 宽度计算（分档策略）
+### 1. 宽度计算（分档策略）✅ 已实现
 
-根据输入数量分档：
+**实现位置**：`src/components/graph/CustomNode.tsx`
+
+根据输入数量分档，在节点渲染时动态计算：
 
 ```typescript
-const widthTiers = {
-  tier1: { maxInputs: 2, width: 200 },  // 1-2个输入：200px
-  tier2: { maxInputs: 4, width: 280 },   // 3-4个输入：280px
-  tier3: { maxInputs: Infinity, width: 360 } // 5个及以上：360px
+/**
+ * 根据输入数量计算分档宽度
+ */
+const getTieredWidth = (inputCount: number): number => {
+  if (inputCount <= 2) return 200;  // 1-2个输入：200px
+  if (inputCount <= 4) return 280;  // 3-4个输入：280px
+  return 360;                        // 5个及以上：360px
 };
-
-function calculateTieredWidth(inputCount: number): number {
-  if (inputCount <= 2) return 200;
-  if (inputCount <= 4) return 280;
-  return 360;
-}
 ```
 
-#### 3.2 高度计算（精确测量 - Canvas API）
-
-**改进**：使用 Canvas API 精确测量文字宽度，替代简单的字符数估算。
-
-**核心函数**：
+**使用方式**：在 `CustomNode` 组件中，根据节点的输入边数量计算宽度：
 
 ```typescript
-/**
- * 使用 Canvas API 精确测量文字换行
- * 考虑实际字体样式，支持中英文混排
- */
-function wrapText(
-  ctx: CanvasRenderingContext2D,
-  text: string,
-  maxWidth: number
-): string[] {
-  const lines: string[] = [];
-  let currentLine = '';
-  
-  // 按字符遍历（支持中文、英文、数字）
-  for (let i = 0; i < text.length; i++) {
-    const char = text[i];
-    const testLine = currentLine + char;
-    const metrics = ctx.measureText(testLine);
-    
-    if (metrics.width > maxWidth && currentLine.length > 0) {
-      lines.push(currentLine);
-      currentLine = char;
-    } else {
-      currentLine = testLine;
-    }
-  }
-  
-  if (currentLine) lines.push(currentLine);
-  return lines.length > 0 ? lines : [''];
-}
+const inputCount = edges.filter(e => e.target === id).length;
+const nodeWidth = getTieredWidth(inputCount);
 
-/**
- * 使用 Canvas API 精确测量文本高度
- */
-function measureTextHeight(
-  text: string,
-  availableWidth: number,
-  fontSize: number = 12,
-  fontFamily: string = 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-  lineHeight: number = 20
-): { lineCount: number; totalHeight: number } {
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
-  
-  if (!ctx) {
-    // Canvas 不可用时，回退到简单估算
-    return { lineCount: 1, totalHeight: lineHeight };
-  }
-  
-  // 设置字体样式（与实际渲染保持一致）
-  ctx.font = `${fontSize}px ${fontFamily}`;
-  
-  // 计算换行
-  const lines = wrapText(ctx, text, availableWidth);
-  
-  return {
-    lineCount: lines.length,
-    totalHeight: lines.length * lineHeight
-  };
-}
+// 应用到节点样式
+<div style={{ minWidth: `${nodeWidth}px`, width: `${nodeWidth}px` }}>
+  {/* 节点内容 */}
+</div>
 ```
 
-**使用示例**：
+### 2. 高度计算 ⚠️ 实际实现方式
+
+**实际实现**：使用 React Flow 自动测量的真实尺寸，而非 Canvas API。
+
+**实现位置**：`src/components/graph/LayoutController.tsx`
 
 ```typescript
-function estimateNodeHeight(node: FlowNode, nodeWidth: number): number {
-  const headerHeight = 40;
-  const lineHeight = 20;
-  const padding = 20;
-  const contentPadding = 12;
-  
-  if (node.type === 'subStepNode' && node.data.subStep) {
-    const subStep = node.data.subStep;
-    let contentHeight = 0;
-    
-    // 使用 Canvas API 精确测量
-    const availableWidth = nodeWidth - (contentPadding * 2);
-    const fontSize = 12;
-    
-    if (subStep.deviceCode) {
-      const measurement = measureTextHeight(
-        `位置: ${subStep.deviceCode}`,
-        availableWidth,
-        fontSize
-      );
-      contentHeight += measurement.totalHeight;
-    }
-    
-    // ... 其他内容测量
-    
-    return headerHeight + contentHeight + paramHeight + padding;
-  }
-}
+// React Flow 11 中节点尺寸存储在 node.width 和 node.height
+// 等待 React Flow 自动测量节点尺寸
+const nodes = getNodes() as FlowNode[];
+
+// 收集真实尺寸（React Flow 测量的）
+const nodeHeights: Record<string, number> = {};
+const nodeWidths: Record<string, number> = {};
+nodes.forEach(node => {
+  // 未测量时使用默认值
+  nodeHeights[node.id] = node.height || 120;
+  nodeWidths[node.id] = node.width || 200;
+});
 ```
 
 **优势**：
-- ✅ 精确考虑字体样式（font-family, font-size）
-- ✅ 支持中英文混排（不同字符宽度）
-- ✅ 误差从 ±20px 降低到 ±2px
-- ✅ 与实际渲染高度高度一致
+- ✅ 使用实际渲染尺寸，无需估算
+- ✅ 自动适应内容变化
+- ✅ 支持动态内容（展开/折叠）
 
-#### 3.3 智能统一尺寸
+**注意**：文档中描述的 Canvas API 精确测量方法（`measureTextHeight`, `wrapText`）**未在代码中实现**。当前实现依赖 React Flow 的自动尺寸测量。
 
-对相同工艺类型的节点进行聚类，统一尺寸：
+### 3. 智能统一尺寸 ❌ 未实现
 
-```typescript
-function calculateIntelligentUnifiedSizes(
-  nodes: FlowNode[],
-  initialWidths: Record<string, number>,
-  initialHeights: Record<string, number>
-): {
-  unifiedWidths: Map<string, number>;
-  unifiedHeights: Map<string, number>;
-} {
-  // 1. 按工艺类型分组
-  const nodesByType: Record<ProcessType, FlowNode[]> = { ... };
-  
-  // 2. 对每个类型组进行智能聚类
-  Object.values(nodesByType).forEach((typeNodes) => {
-    // 改进贪心聚类算法（阈值15%）
-    const clusteredWidths = improvedClusterSimilarSizes(widthData, 0.15, 2);
-    const clusteredHeights = improvedClusterSimilarSizes(heightData, 0.20, 2);
-  });
-  
-  return { unifiedWidths, unifiedHeights };
-}
-```
+**状态**：文档中描述但代码中不存在。
 
-**聚类算法**：改进的贪心聚类，检查组内最大差异，避免不合理分组。
+**描述**：对相同工艺类型的节点进行聚类，统一尺寸。当前实现中，每个节点使用独立计算的尺寸。
 
 ---
 
-### 4. 水平布局优化 (`useAutoLayout.ts`)
+### 4. 水平布局优化
 
-#### 4.1 基于 displayOrder 的水平对齐
+#### 4.1 基于 displayOrder 的水平对齐 ✅ 已实现
 
-X坐标直接由 `displayOrder`（表格顺序）决定，而非 dagre：
+**实现位置**：`src/components/graph/LayoutController.tsx`
+
+X坐标直接由 `displayOrder`（表格顺序）决定：
 
 ```typescript
 // 每个 Process 分配一个水平"车道"
@@ -487,149 +440,79 @@ nodes.forEach(node => {
   nodesByDisplayOrder[displayOrder].push(node);
 });
 
-// 为每个 displayOrder 组分配 X 坐标
+// 为每个 displayOrder 组分配 X 坐标（存储为中心点）
 const displayOrders = Object.keys(nodesByDisplayOrder).map(Number).sort((a, b) => a - b);
 displayOrders.forEach((displayOrder, laneIndex) => {
   const laneX = START_X + laneIndex * (PROCESS_LANE_WIDTH + LANE_GAP);
   nodesByDisplayOrder[displayOrder].forEach(node => {
-    nodePositions[node.id] = { x: laneX, y: 0 };
+    const width = nodeWidths[node.id] || 200;
+    // 存储节点中心点：车道左边缘 + 节点宽度的一半
+    nodePositions[node.id] = { x: laneX + width / 2, y: 0 };
   });
 });
 ```
 
-#### 4.2 汇聚点水平居中
+#### 4.2 汇聚点水平居中 ✅ 已实现
+
+**实现位置**：`src/components/graph/LayoutController.tsx`
 
 采用**加权质心算法**，基于子树规模加权：
 
 ```typescript
-function calculateConvergenceNodePosition(
-  node: FlowNode,
-  edges: RecipeEdge[],
-  nodes: FlowNode[],
-  nodePositions: Record<string, { x: number; y: number }>
-): number {
-  const inputEdges = edges.filter(e => e.target === node.id);
-  const inputIds = inputEdges.map(e => e.source);
-  
-  // 为每个输入分支计算权重和质心
-  const branchWeights: Array<{ weight: number; centroidX: number }> = [];
-  
-  inputIds.forEach(inputId => {
-    // 获取该输入节点的所有上游节点（子树）
-    const subTree = getUpstreamNodes(inputId, edges, nodes);
-    
-    // 计算子树中所有节点的x坐标平均值（质心）
-    const validNodes = subTree.filter(id => nodePositions[id]);
-    const centroidX = validNodes.reduce((sum, id) => 
-      sum + nodePositions[id].x, 0
+// 计算汇聚点 X 坐标 (加权质心法)
+if (parallelSegments.length > 0) {
+  let totalWeight = 0;
+  let weightedXSum = 0;
+
+  parallelSegments.forEach(segment => {
+    // 过滤出已分配位置的节点
+    const validNodes = segment.nodes.filter(n => nodePositions[n.id]);
+    if (validNodes.length === 0) return;
+
+    // 计算该分支的质心 X
+    const segmentCentroidX = validNodes.reduce((sum, n) => 
+      sum + nodePositions[n.id].x, 0
     ) / validNodes.length;
-    
-    const weight = validNodes.length; // 子树规模作为权重
-    
-    branchWeights.push({ weight, centroidX });
+
+    // 权重 = 节点数量 (子树规模)
+    const weight = validNodes.length;
+
+    weightedXSum += segmentCentroidX * weight;
+    totalWeight += weight;
   });
-  
-  // 计算加权平均
-  const totalWeight = branchWeights.reduce((sum, b) => sum + b.weight, 0);
-  const weightedX = branchWeights.reduce((sum, b) => 
-    sum + b.centroidX * b.weight, 0
-  ) / totalWeight;
-  
-  return weightedX;
+
+  if (totalWeight > 0) {
+    convergenceX = weightedXSum / totalWeight;
+  }
 }
 ```
 
-#### 4.3 分支重排序
-
-根据 `sequenceOrder` 和 `Process Index` 重排序分支：
+**串行段对齐**：串行段的节点 X 坐标与汇聚点对齐：
 
 ```typescript
-function reorderBranchesHorizontally(
-  nodes: FlowNode[],
-  edges: RecipeEdge[],
-  nodePositions: Record<string, { x: number; y: number }>,
-  processIndexMap: Record<string, number>
-) {
-  // 找到所有汇聚节点
-  nodes.forEach(targetNode => {
-    const incomingEdges = edges.filter(e => e.target === targetNode.id);
-    if (incomingEdges.length <= 1) return;
-    
-    // 按 sequenceOrder 优先，Process Index 次之排序
-    const sortedEdges = [...incomingEdges].sort((a, b) => {
-      const seqDiff = (a.data?.sequenceOrder || 0) - (b.data?.sequenceOrder || 0);
-      if (seqDiff !== 0) return seqDiff;
-      
-      const pIdxA = processIndexMap[sourceNodeA?.data.processId || ''] ?? 9999;
-      const pIdxB = processIndexMap[sourceNodeB?.data.processId || ''] ?? 9999;
-      return pIdxA - pIdxB;
-    });
-    
-    // 为每个输入分支收集信息（包括整个上游分支）
-    const branches = sortedEdges.map(edge => {
-      const upstreamNodes = getUpstreamNodes(edge.source, edges, nodes);
-      const centroidX = calculateCentroid(upstreamNodes, nodePositions);
-      return { upstreamNodes, centroidX, sequenceOrder: edge.data?.sequenceOrder || 0 };
-    });
-    
-    // 按 sequenceOrder 重新分配位置：将整个分支平移
-    branches.forEach((branch, index) => {
-      const deltaX = newCentroidX - oldCentroidX;
-      branch.upstreamNodes.forEach(nodeId => {
-        nodePositions[nodeId].x += deltaX;
-      });
-    });
-  });
-}
-```
-
-#### 4.4 并行分支压缩
-
-识别同一层级内无直接连接关系的节点，应用更紧凑的间距：
-
-```typescript
-function compressParallelBranches(
-  nodes: FlowNode[],
-  edges: RecipeEdge[],
-  levels: Record<string, number>,
-  nodePositions: Record<string, { x: number; y: number }>,
-  calculatedNodeWidths: Record<string, number>,
-  compressionRatio: number = 0.65 // 压缩到标准间距的65%
-): void {
-  // 按层级分组
-  const levelGroups = groupByLevel(nodes, levels);
-  
-  // 为每个层级处理并行节点
-  Object.values(levelGroups).forEach(levelNodes => {
-    const sortedNodes = [...levelNodes].sort((a, b) => 
-      nodePositions[a.id].x - nodePositions[b.id].x
-    );
-    
-    // 检查每对相邻节点是否有直接连接
-    for (let i = 0; i < sortedNodes.length - 1; i++) {
-      const nodeA = sortedNodes[i];
-      const nodeB = sortedNodes[i + 1];
-      
-      const hasDirectConnection = edges.some(
-        e => (e.source === nodeA.id && e.target === nodeB.id) ||
-             (e.source === nodeB.id && e.target === nodeA.id)
-      );
-      
-      // 如果没有直接连接，则视为并行分支，可以压缩
-      if (!hasDirectConnection) {
-        const currentSpacing = calculateSpacing(nodeA, nodeB);
-        const targetSpacing = currentSpacing * compressionRatio;
-        const deltaX = currentSpacing - targetSpacing;
-        
-        // 将右侧节点向左移动
-        for (let j = i + 1; j < sortedNodes.length; j++) {
-          nodePositions[sortedNodes[j].id].x -= deltaX;
-        }
+// 应用 X 坐标到串行段 (与汇聚点垂直对齐)
+if (convergenceX > 0) {
+  serialSegments.forEach(segment => {
+    segment.nodes.forEach(node => {
+      if (nodePositions[node.id]) {
+        nodePositions[node.id].x = convergenceX;
       }
-    }
+    });
   });
 }
 ```
+
+#### 4.3 分支重排序 ❌ 未实现
+
+**状态**：文档中描述但代码中不存在。
+
+**描述**：根据 `sequenceOrder` 和 `Process Index` 重排序分支的功能未实现。
+
+#### 4.4 并行分支压缩 ❌ 未实现
+
+**状态**：文档中描述但代码中不存在。
+
+**描述**：识别同一层级内无直接连接关系的节点，应用更紧凑间距的功能未实现。
 
 ---
 
@@ -675,55 +558,57 @@ const LAYOUT_CONFIG = {
 
 ## 精确高度计算
 
-### 问题背景
+### 实际实现方式 ⚠️
 
-原有的高度估算方法使用简单的字符数除以每行字符数，存在以下问题：
+**注意**：文档中描述的 Canvas API 精确测量方法**未在代码中实现**。当前实现使用 React Flow 的自动尺寸测量。
 
-1. **字符宽度不准确**：中文、英文、数字宽度不同，固定 `charWidth = 8px` 不准确
-2. **字体样式未考虑**：不同字体、字重、字号影响实际宽度
-3. **误差累积**：估算误差导致连线长度不统一，视觉不美观
+### 当前实现：React Flow 自动测量
 
-### 解决方案：Canvas API 精确测量
+**实现位置**：`src/components/graph/LayoutController.tsx`
 
-使用浏览器原生 Canvas API 在内存中测量文字宽度，与实际渲染完全一致。
-
-#### 实现原理
+系统使用 React Flow 11 的自动尺寸测量功能，在节点渲染后自动获取真实尺寸：
 
 ```typescript
-// 1. 创建离屏 Canvas
-const canvas = document.createElement('canvas');
-const ctx = canvas.getContext('2d')!;
+// 等待 React Flow 自动测量所有节点的真实尺寸
+const nodesInitialized = useNodesInitialized();
 
-// 2. 设置与实际渲染一致的字体样式
-ctx.font = '12px Inter, sans-serif';
-
-// 3. 逐字符测量，计算换行
-for (const char of text) {
-  const testLine = currentLine + char;
-  const metrics = ctx.measureText(testLine);
-  
-  if (metrics.width > maxWidth) {
-    // 换行
-    lines.push(currentLine);
-    currentLine = char;
-  } else {
-    currentLine = testLine;
+useLayoutEffect(() => {
+  // 条件1: 节点已初始化（React Flow 已测量尺寸）
+  if (!nodesInitialized) {
+    return;
   }
-}
+
+  const nodes = getNodes() as FlowNode[];
+  
+  // React Flow 11 中节点尺寸存储在 node.width 和 node.height
+  const nodeHeights: Record<string, number> = {};
+  const nodeWidths: Record<string, number> = {};
+  nodes.forEach(node => {
+    // 未测量时使用默认值
+    nodeHeights[node.id] = node.height || 120;
+    nodeWidths[node.id] = node.width || 200;
+  });
+  
+  // 使用真实尺寸进行布局计算
+  // ...
+}, [nodesInitialized, getNodes]);
 ```
 
-#### 性能优化
+### 优势
 
-- **离屏 Canvas**：不渲染到 DOM，仅用于测量
-- **缓存机制**：相同文本和宽度可缓存结果
-- **回退策略**：Canvas 不可用时自动回退到简单估算
+- ✅ **真实尺寸**：使用实际渲染尺寸，无需估算
+- ✅ **自动适应**：自动适应内容变化（展开/折叠、动态内容）
+- ✅ **无需维护**：不需要手动计算文字换行和高度
 
-#### 效果对比
+### 文档中描述的 Canvas API 方法 ❌ 未实现
 
-| 方法 | 误差范围 | 中英文混排 | 字体样式支持 |
-|------|---------|-----------|-------------|
-| **旧方法（字符数估算）** | ±20px | ❌ | ❌ |
-| **新方法（Canvas API）** | ±2px | ✅ | ✅ |
+文档中描述的以下功能**未在代码中实现**：
+
+- `wrapText` 函数：使用 Canvas API 精确测量文字换行
+- `measureTextHeight` 函数：使用 Canvas API 精确测量文本高度
+- 基于 Canvas 的高度估算逻辑
+
+**原因**：React Flow 的自动尺寸测量已经提供了准确的节点尺寸，无需手动计算。
 
 ---
 
@@ -988,117 +873,144 @@ nodeWidths: {
 
 ## 代码实现细节
 
-### 1. 主布局钩子 (`useAutoLayout.ts`)
+### 1. 主布局控制器 (`LayoutController.tsx`) ✅ 已实现
+
+**实现位置**：`src/components/graph/LayoutController.tsx`
 
 #### 触发条件
 
 布局计算在以下情况触发：
 
-1. 节点数据变化（ID、类型、内容）
-2. 边数据变化（source、target、sequenceOrder）
-3. Process 顺序变化（`processes` 数组顺序）
-4. 所有节点都是临时位置（`{x: 0, y: 0}`）
+1. **节点初始化完成**：使用 `useNodesInitialized` 等待 React Flow 测量节点尺寸
+2. **内容变化**：通过 `layoutTrigger` prop 检测内容变化（工艺段ID、子步骤ID、展开状态）
+3. **首次布局**：使用 `hasLayoutedRef` 确保只布局一次
 
-#### 缓存机制
-
-使用签名比较避免不必要的重新计算：
+#### 布局流程
 
 ```typescript
-const nodesSignature = JSON.stringify(nodes.map(n => ({
-  id: n.id,
-  data: { ...n.data, displayOrder: n.data.displayOrder }
-})));
-const edgesSignature = JSON.stringify(edges.map(e => ({ 
-  source: e.source, 
-  target: e.target, 
-  data: e.data 
-})));
-const processOrderSignature = processes.map(p => p.id).join(',');
+export function LayoutController({ onLayoutComplete, onNodesUpdate, layoutTrigger }: LayoutControllerProps) {
+  const { getNodes, setNodes, getEdges, fitView } = useReactFlow();
+  const nodesInitialized = useNodesInitialized();
+  const hasLayoutedRef = useRef(false);
 
-// 如果签名未变化，跳过布局计算
-if (prevNodesRef.current === nodesSignature &&
-    prevEdgesRef.current === edgesSignature &&
-    prevProcessOrderRef.current === processOrderSignature &&
-    !allNodesHaveTempPosition) {
-  return; // 缓存命中
-}
-```
-
-#### 完整布局流程
-
-```typescript
-export function useAutoLayout() {
-  const nodes = useFlowNodes();
-  const edges = useFlowEdges();
-  const processes = useRecipeStore((state) => state.processes);
-  
-  useEffect(() => {
-    // 1. 检查缓存
-    if (/* 缓存命中 */) return;
+  useLayoutEffect(() => {
+    // 1. 等待节点初始化（React Flow 已测量尺寸）
+    if (!nodesInitialized) return;
     
-    // 2. 识别工艺段
-    const { parallelSegments, convergenceNode, serialSegments } = 
+    // 2. 检查是否已布局过
+    if (hasLayoutedRef.current) return;
+
+    const nodes = getNodes() as FlowNode[];
+    const edges = getEdges() as RecipeEdge[];
+
+    // 3. 收集真实尺寸（React Flow 测量的）
+    const nodeHeights: Record<string, number> = {};
+    const nodeWidths: Record<string, number> = {};
+    nodes.forEach(node => {
+      nodeHeights[node.id] = node.height || 120;
+      nodeWidths[node.id] = node.width || 200;
+    });
+
+    // 4. 识别工艺段
+    const { parallelSegments, serialSegments, convergenceNode } = 
       identifyProcessSegments(nodes, edges);
-    
-    // 3. 计算节点尺寸
-    const initialWidths = calculateTieredWidths(nodes, edges);
-    const initialHeights = estimateNodeHeights(nodes, initialWidths);
-    const { unifiedWidths, unifiedHeights } = 
-      calculateIntelligentUnifiedSizes(nodes, initialWidths, initialHeights);
-    
-    // 4. 布局并行段
+
+    // 5. 基于 displayOrder 分配 X 坐标（存储为中心点）
+    const nodePositions: Record<string, { x: number; y: number }> = {};
+    const nodesByDisplayOrder: Record<number, FlowNode[]> = {};
+    // ... 分组和分配 X 坐标逻辑
+
+    // 6. 布局并行段（计算 Y 坐标）
     const parallelYPositions = layoutParallelSegments(
       parallelSegments,
-      unifiedHeights,
+      nodeHeights,
       { targetEdgeLength: 120, initialY: 80 }
     );
-    
-    // 5. 计算汇聚点Y坐标
-    const convergenceY = calculateConvergenceY(
-      parallelSegments,
-      parallelYPositions,
-      unifiedHeights,
-      120,
-      'max'
-    );
-    
-    // 6. 布局串行段
+
+    // 7. 计算汇聚点位置 (X 和 Y)
+    let convergenceY = 80;
+    let convergenceX = 0;
+    if (convergenceNode) {
+      convergenceY = calculateConvergenceY(
+        parallelSegments,
+        parallelYPositions,
+        nodeHeights,
+        120,
+        'max'
+      );
+      // 计算汇聚点 X 坐标（加权质心法）
+      // ...
+    }
+
+    // 8. 布局串行段
     const serialYPositions = layoutSerialSegments(
       serialSegments,
-      convergenceY + nodeHeight,
-      unifiedHeights,
+      convergenceY + (convergenceNode ? nodeHeights[convergenceNode.id] || 120 : 0),
+      nodeHeights,
       { targetEdgeLength: 120 }
     );
-    
-    // 7. 水平布局（基于 displayOrder）
-    const nodePositions = calculateHorizontalLayout(nodes, processes);
-    
-    // 8. 合并Y坐标
-    Object.assign(nodePositions, parallelYPositions, serialYPositions);
-    
-    // 9. 汇聚点水平居中
-    if (enableWeightedCentering) {
-      applyConvergenceCentering(nodePositions, nodes, edges);
+
+    // 9. 应用 X 坐标到串行段（与汇聚点对齐）
+    if (convergenceX > 0) {
+      serialSegments.forEach(segment => {
+        segment.nodes.forEach(node => {
+          if (nodePositions[node.id]) {
+            nodePositions[node.id].x = convergenceX;
+          }
+        });
+      });
     }
-    
-    // 10. 分支重排序
-    reorderBranchesHorizontally(nodePositions, nodes, edges, processIndexMap);
-    
-    // 11. 压缩并行分支
-    compressParallelBranches(nodePositions, nodes, edges, levels, unifiedWidths);
-    
-    // 12. 转换为左上角坐标（React Flow 使用左上角）
-    const finalPositions = convertToTopLeftCoordinates(
-      nodePositions,
-      unifiedWidths,
-      unifiedHeights
-    );
-    
-    // 13. 保存到 Store
-    useRecipeStore.getState().setNodePositions(finalPositions);
-  }, [nodes, edges, processes]);
+
+    // 10. 合并 Y 坐标
+    Object.keys(parallelYPositions).forEach(nodeId => {
+      if (nodePositions[nodeId]) {
+        nodePositions[nodeId].y = parallelYPositions[nodeId];
+      }
+    });
+    Object.keys(serialYPositions).forEach(nodeId => {
+      if (nodePositions[nodeId]) {
+        nodePositions[nodeId].y = serialYPositions[nodeId];
+      }
+    });
+
+    // 11. 转换为左上角坐标（React Flow 使用左上角）
+    const layoutedNodes = nodes.map(node => {
+      const pos = nodePositions[node.id];
+      const width = nodeWidths[node.id] || 200;
+      const height = nodeHeights[node.id] || 120;
+      
+      return {
+        ...node,
+        position: {
+          x: pos.x - width / 2,  // 中心点 → 左上角
+          y: pos.y - height / 2, // 中心点 → 左上角
+        },
+      };
+    });
+
+    // 12. 更新节点位置
+    onNodesUpdate(layoutedNodes);
+    setNodes(layoutedNodes);
+
+    // 13. 调用 fitView 并通知完成
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        fitView({ padding: 0.2, duration: 0 });
+        hasLayoutedRef.current = true;
+        onLayoutComplete();
+      });
+    });
+  }, [nodesInitialized, getNodes, setNodes, getEdges, fitView, onLayoutComplete, onNodesUpdate]);
+
+  return null; // Headless Component
 }
 ```
+
+#### 坐标系统
+
+- **内部计算**：使用中心点坐标（`{ x: centerX, y: centerY }`）
+- **最终输出**：转换为左上角坐标（React Flow 要求）
+- **转换公式**：`左上角X = 中心X - 宽度/2`，`左上角Y = 中心Y - 高度/2`
 
 ### 2. React Flow 集成
 
@@ -1227,9 +1139,11 @@ export const useFlowEdges = (): RecipeEdge[] => {
 
 ### 4. 布局算法优化
 
-- **智能统一尺寸**：相同类型的节点统一尺寸，减少视觉混乱
-- **并行分支压缩**：压缩无直接连接的并行节点，节省空间
-- **动态节点间距**：根据平均节点宽度动态调整间距
+- **真实尺寸测量**：使用 React Flow 自动测量的节点尺寸，无需估算
+- **坐标系统优化**：内部使用中心点坐标计算，最后转换为左上角坐标
+- **布局触发优化**：基于内容变化触发器，避免不必要的重新计算
+
+**注意**：文档中描述的"智能统一尺寸"和"并行分支压缩"功能未实现。
 
 ---
 
@@ -1239,38 +1153,125 @@ export const useFlowEdges = (): RecipeEdge[] => {
 
 1. ✅ 自动识别并行和串行工艺段
 2. ✅ 确保连线长度统一（120px）
-3. ✅ 根据内容动态计算节点尺寸
-4. ✅ 基于表格顺序进行水平对齐
-5. ✅ 智能处理汇聚点的居中
-6. ✅ 优化并行分支的间距
+3. ✅ 使用 React Flow 自动测量的真实节点尺寸
+4. ✅ 基于表格顺序（`displayOrder`）进行水平对齐
+5. ✅ 智能处理汇聚点的居中（加权质心算法）
+6. ✅ 提供调试模式可视化布局问题
 
 算法具有良好的可扩展性和性能，能够处理复杂的工艺流程图形布局需求。
+
+### 未来改进方向
+
+以下功能在文档中描述但未实现，可作为未来改进方向：
+
+1. **智能统一尺寸**：对相同工艺类型的节点进行聚类，统一尺寸
+2. **分支重排序**：根据 `sequenceOrder` 和 `Process Index` 重排序分支
+3. **并行分支压缩**：压缩无直接连接的并行节点间距，节省空间
 
 ---
 
 ## 相关文件
 
-- `src/hooks/useAutoLayout.ts` - 主布局钩子（包含精确高度计算）
-- `src/hooks/segmentIdentifier.ts` - 工艺段识别
-- `src/hooks/segmentLayoutCalculator.ts` - 分段布局计算
-- `src/components/graph/RecipeFlow.tsx` - React Flow 组件（集成调试开关）
-- `src/components/graph/DebugOverlay.tsx` - 调试叠加层组件（新增）
-- `src/components/graph/CustomNode.tsx` - 自定义节点组件
-- `src/store/useRecipeStore.ts` - 状态管理（包含节点尺寸缓存）
-- `src/types/recipe.ts` - 类型定义
+### 核心布局文件
+
+- `src/components/graph/LayoutController.tsx` - 主布局控制器（Headless Component）
+- `src/components/graph/RecipeFlow.tsx` - React Flow 组件（集成布局控制器）
+- `src/hooks/segmentIdentifier.ts` - 工艺段识别算法
+- `src/hooks/segmentLayoutCalculator.ts` - 分段布局计算器
+
+### 调试组件
+
+- `src/components/graph/DebugOverlay.tsx` - 调试叠加层组件（显示连线长度）
+- `src/components/graph/DebugStatsPanel.tsx` - 调试统计面板（显示布局统计）
+
+### 节点组件
+
+- `src/components/graph/CustomNode.tsx` - 自定义节点组件（包含分档宽度计算）
+
+### 状态管理
+
+- `src/store/useRecipeStore.ts` - 状态管理（包含节点位置缓存）
+
+### 类型定义
+
+- `src/types/recipe.ts` - 类型定义（FlowNode, RecipeEdge, ProcessSegment 等）
+
+### 数据库
+
 - `server/src/db.ts` - 数据库操作
+
+---
+
+## 实现状态说明
+
+### 已实现功能 ✅
+
+1. **工艺段识别**：完整实现，使用 DFS 算法识别并行和串行工艺段
+2. **并行段布局**：完整实现，固定连线长度 120px
+3. **串行段布局**：完整实现，从汇聚点向下排列
+4. **汇聚点计算**：完整实现，支持 Y 坐标（max/weighted/median 策略）和 X 坐标（加权质心）
+5. **水平布局**：完整实现，基于 `displayOrder` 分配水平车道
+6. **分档宽度**：完整实现，在 `CustomNode.tsx` 中根据输入数量计算
+7. **节点尺寸获取**：完整实现，使用 React Flow 自动测量
+8. **调试模式**：完整实现，包括可视化叠加层和统计面板
+
+### 未实现功能 ❌
+
+以下功能在文档中描述，但在代码中**不存在**：
+
+1. **Canvas API 文字测量**：
+   - `wrapText` 函数
+   - `measureTextHeight` 函数
+   - 基于 Canvas 的高度估算逻辑
+   - **原因**：使用 React Flow 自动测量，无需手动计算
+
+2. **智能统一尺寸**：
+   - `calculateIntelligentUnifiedSizes` 函数
+   - 按工艺类型聚类统一尺寸
+   - **原因**：当前每个节点使用独立计算的尺寸
+
+3. **分支重排序**：
+   - `reorderBranchesHorizontally` 函数
+   - 根据 `sequenceOrder` 和 `Process Index` 重排序
+   - **原因**：功能未实现
+
+4. **并行分支压缩**：
+   - `compressParallelBranches` 函数
+   - 压缩无直接连接的并行节点间距
+   - **原因**：功能未实现
+
+### 实现差异说明
+
+1. **布局入口**：
+   - **文档描述**：`useAutoLayout.ts` hook
+   - **实际实现**：`LayoutController.tsx` Headless Component
+   - **原因**：需要在 React Flow 内部使用 `useReactFlow` 和 `useNodesInitialized`
+
+2. **节点尺寸计算**：
+   - **文档描述**：Canvas API 精确测量文字高度
+   - **实际实现**：React Flow 自动测量的真实尺寸
+   - **原因**：React Flow 11 提供了自动尺寸测量，更准确且无需维护
+
+3. **坐标系统**：
+   - **内部计算**：使用中心点坐标
+   - **最终输出**：转换为左上角坐标（React Flow 要求）
+   - **文档说明**：已更新以反映实际实现
+
+---
 
 ## 更新日志
 
-### 2024-01-XX：精确高度计算 + 调试模式
+### 2024-XX-XX：文档更新
 
-**新增功能**：
-- ✅ Canvas API 精确文字高度测量
-- ✅ 调试模式可视化连线长度
-- ✅ 节点尺寸缓存（高度、宽度）
+**更新内容**：
+- ✅ 更新文档以反映实际实现
+- ✅ 标注已实现和未实现的功能
+- ✅ 修正文件路径和代码示例
+- ✅ 更新坐标系统说明
+- ✅ 添加实现状态总览表
 
-**改进效果**：
-- 高度估算误差从 ±20px 降低到 ±2px
-- 连线长度标准差从 8-12px 降低到 < 3px（预期）
-- 可通过调试模式快速定位布局问题
+**主要变更**：
+- 布局入口从 `useAutoLayout.ts` 更正为 `LayoutController.tsx`
+- 节点尺寸计算从 Canvas API 更正为 React Flow 自动测量
+- 标注未实现功能（Canvas API、智能统一尺寸、分支重排序、并行分支压缩）
 

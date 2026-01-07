@@ -221,7 +221,7 @@ export interface InputSource {
 export interface FlowNode {
   id: string;        // 节点ID: "P1" (汇总节点) 或 "P1-substep-1" (子步骤节点)
   type: 'processSummaryNode' | 'subStepNode'; // 节点类型
-  position: { x: number; y: number }; // 由布局算法计算
+  position: { x: number; y: number }; // 由布局算法计算，初始化时使用 (0, 0)
   data: {
     // 汇总节点数据
     processId?: string;
@@ -270,6 +270,7 @@ export interface RecipeEdge {
   type: 'sequenceEdge'; // 对应 React Flow 自定义连线组件名
   data: {
     sequenceOrder: number; // 投料顺序权重，1 为最优先
+    incomingTotal?: number; // 目标节点的入边总数，用于判断是否启用走廊路由
   };
   animated?: boolean; // 默认为 true，表示流动方向
   targetHandle?: string; // 目标节点的 handle ID，由布局算法动态分配（如 "target-0", "target-1"）
