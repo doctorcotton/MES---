@@ -11,7 +11,14 @@ type CustomNodeData = FlowNode['data'];
 
 // 格式化条件值
 const formatConditionValue = (value: { value: number; unit: string; condition?: string }) => {
-  const condition = value.condition || '';
+  const conditionMap: Record<string, string> = {
+    '>=': '≥',
+    '<=': '≤',
+    '>': '>',
+    '<': '<',
+    '=': '='
+  };
+  const condition = value.condition ? (conditionMap[value.condition] || value.condition) : '';
   return `${condition}${value.value}${value.unit}`;
 };
 
