@@ -24,6 +24,12 @@ interface RecipeStore {
   // 展开/折叠状态管理（用于流程图）
   expandedProcesses: Set<string>; // 记录哪些工艺段在流程图中展开显示子步骤
 
+  // 编辑上下文（用于虚线高亮）
+  editingContext: { processId: string; subStepId?: string } | null;
+
+  // 编辑上下文操作
+  setEditingContext: (context: { processId: string; subStepId?: string } | null) => void;
+
   // Process操作
   addProcess: (process: Process) => void;
   updateProcess: (id: string, data: Partial<Omit<Process, 'id' | 'node'>>) => void;
@@ -77,6 +83,12 @@ export const useRecipeStore = create<RecipeStore>((set, get) => ({
   version: 1,
   isSaving: false,
   expandedProcesses: new Set(initialProcesses.map(p => p.id)), // 默认全部展开
+  editingContext: null,
+
+  // 编辑上下文操作
+  setEditingContext: (context) => {
+    set({ editingContext: context });
+  },
 
   // Process操作
   addProcess: (process) => {
@@ -651,6 +663,7 @@ export const useFlowEdges = (): RecipeEdge[] => {
   const processes = useRecipeStore((state) => state.processes);
   const edges = useRecipeStore((state) => state.edges);
   const expandedProcesses = useRecipeStore((state) => state.expandedProcesses);
+  const editingContext = useRecipeStore((state) => state.editingContext);
 
   return useMemo(() => {
     const flowEdges: RecipeEdge[] = [];
@@ -776,17 +789,74 @@ export const useFlowEdges = (): RecipeEdge[] => {
       // 添加 incomingTotal 用于走廊路由判断
       const incomingTotal = incomingEdges.length;
 
+      // 判断是否应该显示为虚线（编辑态高亮）
+      let isEditingDashed = false;
+
+      if (editingContext) {
+        const { processId, subStepId } = editingContext;
+        const editingProcess = processes.find(p => p.id === processId);
+        
+        if (editingProcess) {
+          const isInternalEdge = edge.id.startsWith('internal-');
+          
+          if (subStepId) {
+            // 编辑子步骤：从该子步骤开始往后的内部边 + 如果是最后一步则对外出边
+            const subStepIndex = editingProcess.node.subSteps.findIndex(s => s.id === subStepId);
+            const isLastSubStep = subStepIndex === editingProcess.node.subSteps.length - 1;
+            
+            if (isInternalEdge) {
+              // 检查是否是"从该子步骤开始往后"的内部边
+              const edgeSourceIndex = editingProcess.node.subSteps.findIndex(s => s.id === edge.source);
+              if (edgeSourceIndex >= subStepIndex && edgeSourceIndex < editingProcess.node.subSteps.length - 1) {
+                isEditingDashed = true;
+              }
+            } else if (isLastSubStep) {
+              // 如果是最后一步，标记对外出边
+              const sourceExpanded = expandedProcesses.has(processId);
+              const expectedSourceId = sourceExpanded 
+                ? editingProcess.node.subSteps[editingProcess.node.subSteps.length - 1].id
+                : processId;
+              if (edge.source === expectedSourceId) {
+                isEditingDashed = true;
+              }
+            }
+          } else {
+            // 编辑工艺段：该段所有内部边 + 对外出边
+            if (isInternalEdge) {
+              // 检查是否是该工艺段的内部边
+              const sourceSubStep = editingProcess.node.subSteps.find(s => s.id === edge.source);
+              const targetSubStep = editingProcess.node.subSteps.find(s => s.id === edge.target);
+              if (sourceSubStep && targetSubStep) {
+                isEditingDashed = true;
+              }
+            } else {
+              // 检查是否是该工艺段的对外出边
+              const sourceExpanded = expandedProcesses.has(processId);
+              const expectedSourceId = sourceExpanded
+                ? editingProcess.node.subSteps[editingProcess.node.subSteps.length - 1].id
+                : processId;
+              if (edge.source === expectedSourceId) {
+                isEditingDashed = true;
+              }
+            }
+          }
+        }
+      }
+
       return {
         ...edge,
         data: {
           ...edge.data,
           incomingTotal,
+          isEditingDashed,
         },
         targetHandle,
         sourceHandle,
+        // 根据编辑态动态设置 animated：只有编辑态虚线才流动
+        animated: isEditingDashed ? true : false,
       };
     });
-  }, [processes, edges, expandedProcesses]);
+  }, [processes, edges, expandedProcesses, editingContext]);
 };
 
 /**

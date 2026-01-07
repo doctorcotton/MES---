@@ -121,6 +121,22 @@ export const SequenceEdge = memo(
     const badgeY = targetY - 30; // 稍微调高一点，避免挡住节点标题栏
 
     const sequenceOrder = data?.sequenceOrder;
+    const isEditingDashed = data?.isEditingDashed || false;
+
+    // 根据编辑态决定样式
+    const edgeStyle = useMemo(() => {
+      const baseStyle: { stroke: string; strokeWidth: number; strokeDasharray?: string; opacity?: number } = {
+        stroke: '#9ca3af',
+        strokeWidth: 2,
+      };
+      
+      if (isEditingDashed) {
+        baseStyle.strokeDasharray = '6 6';
+        baseStyle.opacity = 0.7; // 稍微降低不透明度以突出编辑态
+      }
+      
+      return baseStyle;
+    }, [isEditingDashed]);
 
     return (
       <>
@@ -128,7 +144,7 @@ export const SequenceEdge = memo(
           id={id}
           path={edgePath}
           markerEnd={markerEnd}
-          style={{ stroke: '#9ca3af', strokeWidth: 2 }}
+          style={edgeStyle}
         />
         {sequenceOrder && (
           <EdgeLabelRenderer>

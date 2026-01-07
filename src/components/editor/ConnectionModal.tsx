@@ -58,7 +58,7 @@ export function ConnectionModal({ nodeId, open, onOpenChange }: ConnectionModalP
       target: targetProcessId,
       type: 'sequenceEdge',
       data: { sequenceOrder },
-      animated: true,
+      // 不在这里设置 animated，由 useFlowEdges 根据编辑态动态决定
     };
 
     addEdge(newEdge);

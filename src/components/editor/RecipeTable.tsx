@@ -210,6 +210,7 @@ function SortableProcessRow({
                         if (e.key === 'Enter') handleSaveEditProcess(process.id);
                         if (e.key === 'Escape') {
                           setEditingProcessId(null);
+                          setEditingContext(null);
                         }
                       }}
                       className="inline-block w-48 h-6 text-sm"
@@ -341,6 +342,7 @@ export function RecipeTable() {
     reorderProcesses,
     hoveredNodeId,
     setHoveredNodeId,
+    setEditingContext,
   } = useRecipeStore();
   const { isEditable, mode } = useCollabStore();
   const canEdit = mode === 'demo' || isEditable();
@@ -441,6 +443,7 @@ export function RecipeTable() {
     if (process) {
       setEditingProcessId(processId);
       setEditProcessValues({ name: process.name, description: process.description });
+      setEditingContext({ processId });
     }
   };
 
@@ -449,6 +452,7 @@ export function RecipeTable() {
       updateProcess(processId, editProcessValues);
       setEditingProcessId(null);
       setEditProcessValues({});
+      setEditingContext(null);
     }
   };
 
@@ -518,6 +522,11 @@ export function RecipeTable() {
   const handleStartEditSubStep = (subStep: SubStep, field: 'label' | 'deviceCode' | 'ingredients') => {
     setEditingSubStep({ id: subStep.id, field });
     setEditSubStepValues(subStep);
+    // 找到该子步骤所属的工艺段
+    const process = processes.find(p => p.node.subSteps.some(s => s.id === subStep.id));
+    if (process) {
+      setEditingContext({ processId: process.id, subStepId: subStep.id });
+    }
   };
 
   const handleSaveEditSubStep = (processId: string, subStepId: string) => {
@@ -550,12 +559,14 @@ export function RecipeTable() {
       updateSubStep(processId, subStepId, updatedValues);
       setEditingSubStep(null);
       setEditSubStepValues({});
+      setEditingContext(null);
     }
   };
 
   const handleCancelEdit = () => {
     setEditingSubStep(null);
     setEditSubStepValues({});
+    setEditingContext(null);
   };
 
   const getProcessConnections = (processId: string) => {
