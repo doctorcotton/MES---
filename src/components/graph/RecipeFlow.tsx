@@ -61,53 +61,63 @@ export function RecipeFlow() {
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const layoutReadyRef = useRef(false);
   
-  // 受控节点状态：作为 ReactFlow 的唯一节点来源
-  const [nodesState, setNodesState] = useState<FlowNode[]>(() => baseNodes);
+  // 位置表：作为权威的位置来源（Map<nodeId, position>）
+  const positionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  const [positionsVersion, setPositionsVersion] = useState(0); // 用于触发重渲染
 
   const isReadOnly = mode === 'view' && !isEditable();
   
-  // 当基础节点数据变化时，合并旧位置到新内容，避免位置丢失
-  useEffect(() => {
-    setNodesState(prevNodesState => {
-      // 创建位置映射表
-      const positionMap = new Map(
-        prevNodesState.map(n => [n.id, n.position])
-      );
-      
-      // 合并：使用新的基础数据，但保留现有节点的位置
-      const mergedNodes = baseNodes.map(baseNode => ({
-        ...baseNode,
-        position: positionMap.get(baseNode.id) ?? baseNode.position ?? { x: 0, y: 0 },
-      }));
-      
-      console.log('[RecipeFlow] 合并节点数据:', {
-        baseNodesCount: baseNodes.length,
-        prevNodesCount: prevNodesState.length,
-        mergedNodesCount: mergedNodes.length,
-        preservedPositions: Array.from(positionMap.keys()).length,
-        samplePositions: mergedNodes.slice(0, 3).map(n => ({
-          id: n.id,
-          x: n.position.x,
-          y: n.position.y,
-        })),
-      });
-      
-      return mergedNodes;
+  // 同步节点列表：baseNodes 一变，ReactFlow 立刻拿到最新 node list（不等待 effect）
+  // 这是修复"新增节点不出现"的关键：节点列表必须是同步的
+  const nodesForRender = useMemo(() => {
+    return baseNodes.map(baseNode => ({
+      ...baseNode,
+      position: positionsRef.current.get(baseNode.id) ?? baseNode.position ?? { x: 0, y: 0 },
+    }));
+  }, [baseNodes, positionsVersion]); // positionsVersion 变化时也触发重渲染
+
+  // 断线保护：过滤掉指向不存在节点的边（避免一帧滞后导致的视觉断线）
+  const validEdges = useMemo(() => {
+    const nodeIds = new Set(nodesForRender.map(n => n.id));
+    const filtered = edges.filter(edge => {
+      const sourceExists = nodeIds.has(edge.source);
+      const targetExists = nodeIds.has(edge.target);
+      if (!sourceExists || !targetExists) {
+        console.warn('[RecipeFlow] 过滤无效边（节点不存在）:', {
+          edgeId: edge.id,
+          source: edge.source,
+          target: edge.target,
+          sourceExists,
+          targetExists,
+          nodeIds: Array.from(nodeIds).slice(0, 5),
+        });
+        return false;
+      }
+      return true;
     });
-  }, [baseNodes]);
+    return filtered;
+  }, [edges, nodesForRender]);
   
-  // LayoutController 更新节点的回调
+  // LayoutController 更新节点的回调：只更新 position，不覆盖节点数组
   const handleNodesUpdate = useCallback((updatedNodes: FlowNode[]) => {
     console.log('[RecipeFlow] 收到 LayoutController 的节点更新:', {
       nodeCount: updatedNodes.length,
+      baseNodesCount: baseNodes.length,
       samplePositions: updatedNodes.slice(0, 3).map(n => ({
         id: n.id,
         x: n.position.x,
         y: n.position.y,
       })),
     });
-    setNodesState(updatedNodes);
-  }, []);
+    
+    // 只更新位置表，不覆盖节点数组
+    updatedNodes.forEach(node => {
+      positionsRef.current.set(node.id, node.position);
+    });
+    
+    // 触发重渲染（让 nodesForRender 使用新的位置）
+    setPositionsVersion(v => v + 1);
+  }, [baseNodes]);
   
   // 布局完成回调
   const onLayoutComplete = useCallback(() => {
@@ -292,22 +302,24 @@ export function RecipeFlow() {
     [isReadOnly]
   );
 
-  // 添加节点状态检查日志（使用受控的 nodesState）
+  // 添加节点状态检查日志（使用 nodesForRender）
   useEffect(() => {
-    const nonZeroPositions = nodesState.filter(n => n.position.x !== 0 || n.position.y !== 0);
+    const nonZeroPositions = nodesForRender.filter(n => n.position.x !== 0 || n.position.y !== 0);
     console.log('[RecipeFlow] 节点状态检查:', {
-      nodeCount: nodesState.length,
+      nodeCount: nodesForRender.length,
+      baseNodesCount: baseNodes.length,
       edgeCount: edges.length,
+      validEdgeCount: validEdges.length,
       layoutReady,
       nonZeroPositionCount: nonZeroPositions.length,
-      allZeroPosition: nodesState.every(n => n.position.x === 0 && n.position.y === 0),
-      samplePositions: nodesState.slice(0, 5).map(n => ({
+      allZeroPosition: nodesForRender.every(n => n.position.x === 0 && n.position.y === 0),
+      samplePositions: nodesForRender.slice(0, 5).map(n => ({
         id: n.id,
         x: n.position.x,
         y: n.position.y,
       })),
     });
-  }, [nodesState, edges, layoutReady]);
+  }, [nodesForRender, baseNodes, edges, validEdges, layoutReady]);
 
   return (
     <div className="h-full w-full relative">
@@ -357,8 +369,8 @@ export function RecipeFlow() {
         className="h-full w-full"
       >
         <ReactFlow
-          nodes={nodesState as Node[]}
-          edges={edges as Edge[]}
+          nodes={nodesForRender as Node[]}
+          edges={validEdges as Edge[]}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
           onInit={onInit}
@@ -376,7 +388,7 @@ export function RecipeFlow() {
             onNodesUpdate={handleNodesUpdate}
             layoutTrigger={layoutTrigger}
           />
-          <NodeInternalsUpdater nodes={nodesState as Node[]} edges={edges as Edge[]} />
+          <NodeInternalsUpdater nodes={nodesForRender as Node[]} edges={validEdges as Edge[]} />
           <Background />
           <Controls />
           <MiniMap />

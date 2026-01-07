@@ -337,6 +337,9 @@ export interface FlowNode {
   id: string;        // 节点ID: "P1" (汇总节点) 或 "P1-substep-1" (子步骤节点)
   type: 'processSummaryNode' | 'subStepNode'; // 节点类型
   position: { x: number; y: number }; // 由布局算法计算，初始化时使用 (0, 0)
+  // React Flow runtime-measured sizes (populated by ReactFlow store)
+  width?: number;
+  height?: number;
   data: {
     // 汇总节点数据
     processId?: string;

@@ -29,13 +29,20 @@ export function LayoutController({ onLayoutComplete, onNodesUpdate, layoutTrigge
   const layoutIterationRef = useRef(0); // 记录重排迭代次数
   const [relayoutTrigger, setRelayoutTrigger] = useState(0); // 用于触发重排的 state
 
-  // 内容变化时重置布局标记和迭代次数
-  if (layoutTrigger !== layoutTriggerRef.current) {
-    hasLayoutedRef.current = false;
-    layoutIterationRef.current = 0;
-    layoutTriggerRef.current = layoutTrigger;
-    setRelayoutTrigger(0); // 重置触发器
-  }
+  // 内容变化时重置布局标记和迭代次数（移到 effect 中，避免在 render 阶段调用 setState）
+  useLayoutEffect(() => {
+    if (layoutTrigger !== layoutTriggerRef.current) {
+      console.log('[LayoutController] layoutTrigger 变化，重置布局状态', {
+        old: layoutTriggerRef.current,
+        new: layoutTrigger,
+      });
+      hasLayoutedRef.current = false;
+      layoutIterationRef.current = 0;
+      layoutTriggerRef.current = layoutTrigger;
+      // 递增触发器，确保触发依赖变化（而不是重置为 0，因为可能之前就是 0）
+      setRelayoutTrigger(prev => prev + 1);
+    }
+  }, [layoutTrigger]);
 
   useLayoutEffect(() => {
     // 条件1: 节点已初始化（React Flow 已测量尺寸）
@@ -55,11 +62,23 @@ export function LayoutController({ onLayoutComplete, onNodesUpdate, layoutTrigge
       const edges = getEdges() as RecipeEdge[];
 
       // 检查节点初始化状态
+      const nodeIds = new Set(nodes.map(n => n.id));
+      const invalidEdges = edges.filter(e => !nodeIds.has(e.source) || !nodeIds.has(e.target));
+      
+      if (invalidEdges.length > 0) {
+        console.warn('[LayoutController] 发现指向不存在节点的边（可能节点列表滞后）:', {
+          invalidEdgeCount: invalidEdges.length,
+          invalidEdges: invalidEdges.map(e => ({ id: e.id, source: e.source, target: e.target })),
+          nodeIds: Array.from(nodeIds).slice(0, 10),
+        });
+      }
+
       console.log('[LayoutController] 状态检查:', {
         nodesInitialized,
         hasLayouted: hasLayoutedRef.current,
         nodeCount: nodes.length,
         edgeCount: edges.length,
+        invalidEdgeCount: invalidEdges.length,
       });
 
       // 检查节点尺寸（放宽条件：允许部分节点未测量，使用默认尺寸继续布局）
@@ -338,12 +357,22 @@ export function LayoutController({ onLayoutComplete, onNodesUpdate, layoutTrigge
         layoutedNodes.map(n => ({ id: n.id, x: n.position.x, y: n.position.y }))
       );
 
-      // 更新受控节点状态（通过回调）
+      // 更新受控节点状态（通过回调）：只传位置信息
       console.log('[LayoutController] 更新受控节点状态');
       onNodesUpdate(layoutedNodes);
 
-      // 同时更新 React Flow 内部状态（保持同步）
-      setNodes(layoutedNodes);
+      // 同时更新 React Flow 内部状态：只更新 position，不覆盖节点数组
+      // 这是修复"新增节点不出现"的关键：不能把 getNodes() 拿到的数组作为权威节点列表
+      setNodes(prev => {
+        const positionMap = new Map(layoutedNodes.map(n => [n.id, n.position]));
+        return prev.map(node => {
+          const newPosition = positionMap.get(node.id);
+          if (newPosition) {
+            return { ...node, position: newPosition };
+          }
+          return node;
+        });
+      });
 
       console.log('[LayoutController] 节点位置已更新，准备校验间距');
 

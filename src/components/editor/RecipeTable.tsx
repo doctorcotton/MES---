@@ -467,7 +467,8 @@ export function RecipeTable() {
     if (!addSubStepProcessId) return;
 
     const process = processes.find(p => p.id === addSubStepProcessId);
-    const subStepCount = process?.node.subSteps.length || 0;
+    const existingSubSteps = process?.node.subSteps || [];
+    const subStepCount = existingSubSteps.length || 0;
     const template = getSubStepTemplate(processType);
     
     if (!template) {
@@ -476,9 +477,28 @@ export function RecipeTable() {
       return;
     }
 
+    // 生成全局唯一的子步骤 ID：
+    // 之前使用 length+1，在“删除中间步骤后再新增”会复用旧 ID，导致流程图节点缺失/连线断开
+    const prefix = `${addSubStepProcessId}-substep-`;
+    const maxIndex = existingSubSteps.reduce((max, s) => {
+      if (typeof s.id !== 'string' || !s.id.startsWith(prefix)) return max;
+      const suffix = s.id.slice(prefix.length);
+      const n = Number.parseInt(suffix, 10);
+      return Number.isFinite(n) ? Math.max(max, n) : max;
+    }, 0);
+
+    let nextIndex = Math.max(maxIndex + 1, subStepCount + 1);
+    let newId = `${addSubStepProcessId}-substep-${nextIndex}`;
+    while (existingSubSteps.some(s => s.id === newId)) {
+      nextIndex += 1;
+      newId = `${addSubStepProcessId}-substep-${nextIndex}`;
+    }
+
+    const maxOrder = existingSubSteps.reduce((max, s) => Math.max(max, s.order || 0), 0);
+
     const newSubStep: SubStep = {
-      id: `${addSubStepProcessId}-substep-${subStepCount + 1}`,
-      order: subStepCount + 1,
+      id: newId,
+      order: maxOrder + 1,
       processType: processType,
       label: template.label,
       deviceCode: template.defaultDeviceCode,

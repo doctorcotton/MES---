@@ -10,7 +10,7 @@ const SAVE_DEBOUNCE = 3000; // 3秒防抖
  * 计算数据签名（用于判断是否真的发生了业务变更）
  * 只包含稳定的业务字段，排除 updatedAt 等会频繁变化的元数据
  */
-function calculateDataSignature(processes: any[], edges: any[], version: number): string {
+function calculateDataSignature(processes: any[], edges: any[]): string {
   // processes 签名：只包含 id、子步骤 id 和顺序
   const processesSig = processes.map(p => ({
     id: p.id,
@@ -31,15 +31,15 @@ function calculateDataSignature(processes: any[], edges: any[], version: number)
   return JSON.stringify({
     processes: processesSig,
     edges: edgesSig,
-    version,
   });
 }
 
 export function useAutoSave() {
-  const { processes, edges, metadata, version, setSaving } = useRecipeStore();
+  const { processes, edges, metadata, version, setSaving, setVersion } = useRecipeStore();
   const { mode, userId, isEditable } = useCollabStore();
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedSignatureRef = useRef<string | null>(null);
+  const hasInitializedSignatureRef = useRef(false);
 
   useEffect(() => {
     // 只在编辑模式下自动保存
@@ -49,11 +49,20 @@ export function useAutoSave() {
         saveTimeoutRef.current = null;
       }
       lastSavedSignatureRef.current = null; // 退出编辑模式时重置签名
+      hasInitializedSignatureRef.current = false;
       return;
     }
 
     // 计算当前数据签名
-    const currentSignature = calculateDataSignature(processes, edges, version);
+    const currentSignature = calculateDataSignature(processes, edges);
+
+    // 进入编辑模式后的第一次：只建立“基线签名”，不立即触发保存
+    // 避免“我没改任何东西也在自动保存/版本递增”的体验
+    if (!hasInitializedSignatureRef.current) {
+      lastSavedSignatureRef.current = currentSignature;
+      hasInitializedSignatureRef.current = true;
+      return;
+    }
     
     // 如果签名与上次一致，说明数据没有实际变化，不触发保存
     if (lastSavedSignatureRef.current === currentSignature) {
@@ -102,11 +111,18 @@ export function useAutoSave() {
           }),
         });
 
+        const data = await response.json();
+
         if (!response.ok) {
-          const error = await response.json();
-          console.error('保存失败:', error);
+          console.error('保存失败:', data);
         } else {
-          // 保存成功后更新签名
+          // 保存成功后更新版本号和签名
+          const newVersion = data.recipe?.version || data.version || version;
+          if (newVersion !== version) {
+            console.log('[useAutoSave] 更新版本号:', { old: version, new: newVersion });
+            setVersion(newVersion);
+          }
+          // 重要：签名不包含 version，因此这里设置为“业务数据签名”即可，避免保存循环
           lastSavedSignatureRef.current = currentSignature;
         }
       } catch (error) {
@@ -121,5 +137,5 @@ export function useAutoSave() {
         clearTimeout(saveTimeoutRef.current);
       }
     };
-  }, [processes, edges, metadata, version, mode, userId, setSaving]);
+  }, [processes, edges, metadata, version, mode, userId, setSaving, setVersion]);
 }

@@ -60,6 +60,7 @@ interface RecipeStore {
   // Collaboration
   syncFromServer: (schema: RecipeSchema, version: number) => void;
   setSaving: (saving: boolean) => void;
+  setVersion: (version: number) => void;
   saveToServer: (userId?: string) => Promise<boolean>;
 }
 
@@ -461,6 +462,10 @@ export const useRecipeStore = create<RecipeStore>((set, get) => ({
 
   setSaving: (isSaving) => {
     set({ isSaving });
+  },
+
+  setVersion: (newVersion) => {
+    set({ version: newVersion });
   },
 
   saveToServer: async (userId?: string) => {
