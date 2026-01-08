@@ -52,6 +52,11 @@ export function ConnectionModal({ nodeId, open, onOpenChange }: ConnectionModalP
       return;
     }
 
+    // 工艺段只能有一个下游，删除已有的输出连接
+    currentConnections.forEach((edge) => {
+      removeEdge(edge.id);
+    });
+
     const newEdge: RecipeEdge = {
       id: `e_${processId}-${targetProcessId}-${Date.now()}`,
       source: processId,
@@ -149,7 +154,7 @@ export function ConnectionModal({ nodeId, open, onOpenChange }: ConnectionModalP
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            关闭
+            保存
           </Button>
         </DialogFooter>
       </DialogContent>

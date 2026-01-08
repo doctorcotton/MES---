@@ -16,25 +16,26 @@ export interface OnlineUser {
   socketId: string;
   mode: CollaborationMode;
   connectedAt: string;
+  ip?: string;
 }
 
 interface CollabStore {
   // 用户信息
   userId: string | null;
   userName: string | null;
-  
+
   // 当前模式
   mode: CollaborationMode;
-  
+
   // 编辑锁状态
   lockStatus: EditLock;
-  
+
   // 在线用户
   onlineUsers: OnlineUser[];
-  
+
   // 连接状态
   isConnected: boolean;
-  
+
   // Actions
   setUser: (userId: string, userName: string) => void;
   setMode: (mode: CollaborationMode) => void;
@@ -43,7 +44,7 @@ interface CollabStore {
   updateOnlineUser: (user: OnlineUser) => void;
   removeOnlineUser: (socketId: string) => void;
   setConnected: (connected: boolean) => void;
-  
+
   // 计算属性
   isEditable: () => boolean;
   isLockedByMe: () => boolean;

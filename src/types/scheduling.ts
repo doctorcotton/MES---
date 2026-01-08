@@ -51,6 +51,16 @@ export interface DeviceRequirement {
 }
 
 /**
+ * 占用段（用于区分等待和实际工作）
+ */
+export interface OccupancySegment {
+    kind: 'wait' | 'mix' | 'work';          // 段类型：等待/搅拌/工作
+    start: number;                          // 段开始时间（相对时间，单位：分钟）
+    end: number;                            // 段结束时间（相对时间，单位：分钟）
+    label?: string;                          // 可选的段标签
+}
+
+/**
  * 设备占用记录（用于甘特图）
  */
 export interface DeviceOccupancy {
@@ -69,6 +79,9 @@ export interface DeviceOccupancy {
 
     // 状态
     state: 'planned' | 'in_progress' | 'completed' | 'delayed';
+
+    // 分段信息（用于调配等复杂步骤）
+    segments?: OccupancySegment[];          // 占用段列表（如等待段+搅拌段）
 }
 
 /**

@@ -513,7 +513,7 @@ export const useRecipeStore = create<RecipeStore>((set, get) => ({
 
       // 获取 socketId，用于服务端排除提交者
       const socketId = socketService.getSocket()?.id || null;
-      
+
       const response = await fetch('http://localhost:3001/api/recipe', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -680,14 +680,14 @@ export const useFlowEdges = (): RecipeEdge[] => {
       let sourceNodeId: string;
       let targetNodeId: string;
 
-      if (sourceExpanded) {
+      if (sourceExpanded && sourceProcess.node.subSteps.length > 0) {
         const lastSubStep = sourceProcess.node.subSteps[sourceProcess.node.subSteps.length - 1];
         sourceNodeId = lastSubStep.id;
       } else {
         sourceNodeId = sourceProcess.id;
       }
 
-      if (targetExpanded) {
+      if (targetExpanded && targetProcess.node.subSteps.length > 0) {
         const firstSubStep = targetProcess.node.subSteps[0];
         targetNodeId = firstSubStep.id;
       } else {
@@ -795,15 +795,15 @@ export const useFlowEdges = (): RecipeEdge[] => {
       if (editingContext) {
         const { processId, subStepId } = editingContext;
         const editingProcess = processes.find(p => p.id === processId);
-        
+
         if (editingProcess) {
           const isInternalEdge = edge.id.startsWith('internal-');
-          
+
           if (subStepId) {
             // 编辑子步骤：从该子步骤开始往后的内部边 + 如果是最后一步则对外出边
             const subStepIndex = editingProcess.node.subSteps.findIndex(s => s.id === subStepId);
             const isLastSubStep = subStepIndex === editingProcess.node.subSteps.length - 1;
-            
+
             if (isInternalEdge) {
               // 检查是否是"从该子步骤开始往后"的内部边
               const edgeSourceIndex = editingProcess.node.subSteps.findIndex(s => s.id === edge.source);
@@ -813,7 +813,7 @@ export const useFlowEdges = (): RecipeEdge[] => {
             } else if (isLastSubStep) {
               // 如果是最后一步，标记对外出边
               const sourceExpanded = expandedProcesses.has(processId);
-              const expectedSourceId = sourceExpanded 
+              const expectedSourceId = (sourceExpanded && editingProcess.node.subSteps.length > 0)
                 ? editingProcess.node.subSteps[editingProcess.node.subSteps.length - 1].id
                 : processId;
               if (edge.source === expectedSourceId) {
@@ -832,7 +832,7 @@ export const useFlowEdges = (): RecipeEdge[] => {
             } else {
               // 检查是否是该工艺段的对外出边
               const sourceExpanded = expandedProcesses.has(processId);
-              const expectedSourceId = sourceExpanded
+              const expectedSourceId = (sourceExpanded && editingProcess.node.subSteps.length > 0)
                 ? editingProcess.node.subSteps[editingProcess.node.subSteps.length - 1].id
                 : processId;
               if (edge.source === expectedSourceId) {
@@ -865,10 +865,11 @@ export const useFlowEdges = (): RecipeEdge[] => {
  */
 export const useRecipeSchedule = (): ScheduleResult => {
   const processes = useRecipeStore((state) => state.processes);
+  const edges = useRecipeStore((state) => state.edges);
 
   const schedule = useMemo(() => {
-    return calculateSchedule(processes, defaultDevicePool);
-  }, [processes]);
+    return calculateSchedule(processes, defaultDevicePool, edges);
+  }, [processes, edges]);
 
   return schedule;
 };

@@ -37,13 +37,12 @@ export function OnlineUsers() {
               >
                 <div className="flex items-center gap-3">
                   <div
-                    className={`h-3 w-3 rounded-full ${
-                      user.mode === 'edit'
+                    className={`h-3 w-3 rounded-full ${user.mode === 'edit'
                         ? 'bg-green-500'
                         : user.mode === 'demo'
-                        ? 'bg-orange-500'
-                        : 'bg-gray-400'
-                    }`}
+                          ? 'bg-orange-500'
+                          : 'bg-gray-400'
+                      }`}
                   />
                   <div>
                     <div className="font-medium">
@@ -54,8 +53,9 @@ export function OnlineUsers() {
                       {user.mode === 'edit'
                         ? '编辑模式'
                         : user.mode === 'demo'
-                        ? '演示模式'
-                        : '查看模式'}
+                          ? '演示模式'
+                          : '查看模式'}
+                      {user.ip && ` · ${user.ip}`}
                     </div>
                   </div>
                 </div>

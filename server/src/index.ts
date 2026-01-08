@@ -127,7 +127,7 @@ app.post('/api/config/fields', (req, res) => {
   // 全局 key 查重
   const existing = getFieldConfigs().find(c => c.key === config.key);
   if (existing) {
-    return res.status(409).json({ 
+    return res.status(409).json({
       error: `字段 key "${config.key}" 已存在（工艺类型: ${existing.processType}）`,
       duplicateKey: config.key,
       existingProcessType: existing.processType
@@ -218,9 +218,22 @@ io.on('connection', (socket) => {
 
   const userId = clientUserId || generateUserId();
   const userName = clientUserName || generateUserName();
-  const user = userManager.addUser(socket.id, userId, userName);
 
-  console.log(`用户连接: ${userName} (${userId}) - ${socket.id}`, {
+  // 获取客户端 IP 地址
+  const forwardedFor = socket.handshake.headers['x-forwarded-for'];
+  let clientIp = forwardedFor
+    ? (Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor.split(',')[0].trim())
+    : socket.handshake.address;
+  // 处理 IPv6 格式的本地地址
+  if (clientIp === '::1' || clientIp === '::ffff:127.0.0.1') {
+    clientIp = '127.0.0.1';
+  } else if (clientIp?.startsWith('::ffff:')) {
+    clientIp = clientIp.replace('::ffff:', '');
+  }
+
+  const user = userManager.addUser(socket.id, userId, userName, clientIp);
+
+  console.log(`用户连接: ${userName} (${userId}) - ${socket.id} - IP: ${clientIp}`, {
     fromClient: !!clientUserId,
   });
 
@@ -324,7 +337,7 @@ setInterval(() => {
 async function sendFeishuWebhook(hostIP: string, backendPort: number): Promise<void> {
   const webhookUrl = process.env.WEBHOOK_URL || 'https://k11pnjpvz1.feishu.cn/base/workflow/webhook/event/IGolaXSBbwNnxsh5FSOc9K82njh';
   const serviceName = process.env.SERVICE_NAME || 'MES配方编辑器';
-  
+
   // 如果 webhook URL 未配置，跳过发送
   if (!webhookUrl || webhookUrl.trim() === '') {
     console.log('  Webhook URL 未配置，跳过通知');
@@ -385,7 +398,7 @@ httpServer.listen(PORT, HOST, async () => {
   const localIP = getLocalIP();
   console.log(`服务器运行在 http://localhost:${PORT}`);
   console.log(`局域网访问地址: http://${localIP}:${PORT}`);
-  
+
   // 发送 webhook 通知（异步，不阻塞启动）
   sendFeishuWebhook(localIP, PORT).catch(err => {
     console.error('Webhook 发送异常:', err);

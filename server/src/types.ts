@@ -21,6 +21,7 @@ export interface OnlineUser {
   socketId: string;
   mode: 'view' | 'edit' | 'demo';
   connectedAt: string;
+  ip?: string;
 }
 
 export interface SocketUser {

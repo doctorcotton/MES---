@@ -1,5 +1,5 @@
-import { SubStep, Process } from '@/types/recipe';
-import { DeviceResource, DeviceRequirement, DeviceOccupancy, ScheduleResult, ScheduleWarning, DeviceState } from '@/types/scheduling';
+import { SubStep, Process, RecipeEdge, ProcessType } from '@/types/recipe';
+import { DeviceResource, DeviceRequirement, DeviceOccupancy, ScheduleResult, ScheduleWarning, DeviceState, OccupancySegment } from '@/types/scheduling';
 
 import { defaultDevicePool, findDevicesByType, findDeviceByCode } from '@/data/devicePool';
 
@@ -8,7 +8,8 @@ import { defaultDevicePool, findDevicesByType, findDeviceByCode } from '@/data/d
  */
 export function calculateSchedule(
     processes: Process[],
-    devicePool: DeviceResource[] = defaultDevicePool
+    devicePool: DeviceResource[] = defaultDevicePool,
+    edges: RecipeEdge[] = []
 ): ScheduleResult {
     const timeline: DeviceOccupancy[] = [];
     const warnings: ScheduleWarning[] = [];
@@ -27,14 +28,129 @@ export function calculateSchedule(
         });
     });
 
+    // 1. 基于 SubStep.order 自动生成隐式 mustAfter（工艺段内部顺序）
+    allSteps.forEach(({ step, processId }) => {
+        const process = processes.find(p => p.id === processId);
+        if (!process) return;
+        
+        const sortedSubSteps = [...process.node.subSteps].sort((a, b) => a.order - b.order);
+        const currentIndex = sortedSubSteps.findIndex(s => s.id === step.id);
+        
+        if (currentIndex > 0) {
+            // 当前步骤必须在前一个步骤之后
+            const prevStep = sortedSubSteps[currentIndex - 1];
+            if (!step.mustAfter) {
+                step.mustAfter = [];
+            }
+            // 避免重复添加
+            if (!step.mustAfter.includes(prevStep.id)) {
+                step.mustAfter.push(prevStep.id);
+            }
+        }
+    });
+
+    // 2. 基于 edges 为调配步骤添加上游依赖
+    const stepIdToProcessId = new Map<string, string>();
+    allSteps.forEach(({ step, processId }) => {
+        stepIdToProcessId.set(step.id, processId);
+    });
+
+    // 找到所有调配步骤（COMPOUNDING 类型）
+    const compoundingSteps = allSteps.filter(({ step }) => 
+        step.processType === ProcessType.COMPOUNDING
+    );
+
+    compoundingSteps.forEach(({ step, processId }) => {
+        // 找到所有指向当前工艺段的 edges
+        const incomingEdges = edges.filter(e => e.target === processId);
+        
+        if (incomingEdges.length > 0) {
+            // 收集所有上游工艺段的最后一个子步骤ID
+            const upstreamStepIds: string[] = [];
+            
+            incomingEdges.forEach(edge => {
+                const sourceProcess = processes.find(p => p.id === edge.source);
+                if (sourceProcess && sourceProcess.node.subSteps.length > 0) {
+                    // 找到源工艺段的最后一个子步骤
+                    const sortedSubSteps = [...sourceProcess.node.subSteps]
+                        .sort((a, b) => a.order - b.order);
+                    const lastSubStep = sortedSubSteps[sortedSubSteps.length - 1];
+                    upstreamStepIds.push(lastSubStep.id);
+                }
+            });
+
+            // 将上游步骤添加到 mustAfter
+            if (!step.mustAfter) {
+                step.mustAfter = [];
+            }
+            upstreamStepIds.forEach(upstreamId => {
+                if (!step.mustAfter!.includes(upstreamId)) {
+                    step.mustAfter!.push(upstreamId);
+                }
+            });
+        }
+    });
+
+    // 3. 对同一设备增加"工艺段级串行"依赖
+    // 按 processes 数组顺序，对每个设备，确保后一个工艺段的第一个子步骤 mustAfter 前一个工艺段的最后一个子步骤
+    const deviceToProcessSteps = new Map<string, Array<{ processId: string; firstStepId: string; lastStepId: string }>>();
+    
+    processes.forEach(process => {
+        const sortedSubSteps = [...process.node.subSteps].sort((a, b) => a.order - b.order);
+        if (sortedSubSteps.length === 0) return;
+        
+        const firstStep = sortedSubSteps[0];
+        const lastStep = sortedSubSteps[sortedSubSteps.length - 1];
+        
+        // 获取设备编号（优先从 deviceRequirement 获取）
+        const deviceCode = firstStep.deviceRequirement?.deviceCode || firstStep.deviceCode;
+        if (!deviceCode) return;
+        
+        if (!deviceToProcessSteps.has(deviceCode)) {
+            deviceToProcessSteps.set(deviceCode, []);
+        }
+        deviceToProcessSteps.get(deviceCode)!.push({
+            processId: process.id,
+            firstStepId: firstStep.id,
+            lastStepId: lastStep.id
+        });
+    });
+    
+    // 对每个设备，按 processes 数组顺序建立串行依赖
+    deviceToProcessSteps.forEach((processSteps, deviceCode) => {
+        // 按 processes 数组顺序排序（保持原始顺序）
+        const sortedProcessSteps = processSteps.sort((a, b) => {
+            const indexA = processes.findIndex(p => p.id === a.processId);
+            const indexB = processes.findIndex(p => p.id === b.processId);
+            return indexA - indexB;
+        });
+        
+        // 后一个工艺段的第一个子步骤必须在前一个工艺段的最后一个子步骤之后
+        for (let i = 1; i < sortedProcessSteps.length; i++) {
+            const prev = sortedProcessSteps[i - 1];
+            const curr = sortedProcessSteps[i];
+            
+            const currFirstStep = allSteps.find(({ step }) => step.id === curr.firstStepId)?.step;
+            if (currFirstStep) {
+                if (!currFirstStep.mustAfter) {
+                    currFirstStep.mustAfter = [];
+                }
+                if (!currFirstStep.mustAfter.includes(prev.lastStepId)) {
+                    currFirstStep.mustAfter.push(prev.lastStepId);
+                }
+            }
+        }
+    });
+
     // 按顺序处理步骤
     const processedSteps = new Set<string>();
     const stepStartTimes = new Map<string, number>();
+    const stepEndTimes = new Map<string, number>(); // 新增：记录所有步骤的结束时间
 
     // 第一遍：处理没有依赖的步骤
     allSteps.forEach(({ step, processId }) => {
         if (!step.mustAfter || step.mustAfter.length === 0) {
-            scheduleStep(step, processId, 0, timeline, devicePool, stepStartTimes, processedSteps, warnings);
+            scheduleStep(step, processId, 0, timeline, devicePool, stepStartTimes, processedSteps, warnings, allSteps);
         }
     });
 
@@ -53,7 +169,7 @@ export function calculateSchedule(
                 const dependenciesMet = checkDependencies(step.mustAfter || [], processedSteps);
                 if (dependenciesMet) {
                     const startTime = calculateStartTime(step.mustAfter || [], stepStartTimes, timeline);
-                    scheduleStep(step, processId, startTime, timeline, devicePool, stepStartTimes, processedSteps, warnings);
+                    scheduleStep(step, processId, startTime, timeline, devicePool, stepStartTimes, processedSteps, warnings, allSteps);
                     changed = true;
                 }
             }
@@ -68,14 +184,29 @@ export function calculateSchedule(
         });
     }
 
-    // 计算总耗时
-    const totalDuration = Math.max(...Array.from(stepStartTimes.values()).map(startTime => {
-        const stepObj = allSteps.find(({ step }) => stepStartTimes.get(step.id) === startTime);
-        if (!stepObj) return 0;
-        const { step } = stepObj;
-        const duration = getStepDuration(step);
-        return startTime + duration;
-    }), 0);
+    // 计算所有步骤的结束时间
+    allSteps.forEach(({ step }) => {
+        const startTime = stepStartTimes.get(step.id);
+        if (startTime !== undefined) {
+            const duration = getStepDuration(step);
+            stepEndTimes.set(step.id, startTime + duration);
+        }
+    });
+
+    // 计算总耗时（优先以调配步骤结束为准，如果没有调配则取最大值）
+    const compoundingOccupancies = timeline.filter(o => {
+        const step = allSteps.find(({ step }) => step.id === o.stepId)?.step;
+        return step?.processType === ProcessType.COMPOUNDING;
+    });
+    
+    let totalDuration: number;
+    if (compoundingOccupancies.length > 0) {
+        // 以调配步骤的结束时间为准
+        totalDuration = Math.max(...compoundingOccupancies.map(o => o.endTime), 0);
+    } else {
+        // 回退：取所有步骤的最大结束时间
+        totalDuration = Math.max(...Array.from(stepEndTimes.values()), 0);
+    }
 
     // 计算关键路径（简化版：最长路径）
     const criticalPath = findCriticalPath(allSteps, stepStartTimes);
@@ -93,20 +224,21 @@ export function calculateSchedule(
  * 计算设备占用时间线（支持工厂配置上下文）
  * @param processes 工艺流程列表
  * @param context 设备配置上下文（研发视图或生产视图）
+ * @param edges 工艺段间流向连线（可选）
  * @returns 调度结果
  */
 export function calculateScheduleWithContext(
     processes: Process[],
-    context: import('@/types/scheduling').DeviceConfigContext
+    context: import('@/types/scheduling').DeviceConfigContext,
+    edges: RecipeEdge[] = []
 ): ScheduleResult {
     // 使用上下文中的激活设备池进行调度
-    return calculateSchedule(processes, context.activeDevicePool);
+    return calculateSchedule(processes, context.activeDevicePool, edges);
 }
 
 function getStepDuration(step: SubStep): number {
-    return step.deviceRequirement?.occupyDuration?.value ||
-        (step as any).estimatedDuration?.value ||
-        10; // 默认10分钟
+    // 只使用预计耗时，未填则使用常量1（用于表达先后/并行，不代表真实分钟）
+    return (step as any).estimatedDuration?.value || 1;
 }
 
 /**
@@ -120,7 +252,8 @@ function scheduleStep(
     devicePool: DeviceResource[],
     stepStartTimes: Map<string, number>,
     processedSteps: Set<string>,
-    warnings: ScheduleWarning[]
+    warnings: ScheduleWarning[],
+    allSteps?: Array<{ step: SubStep; processId: string }>
 ) {
     // 兼容旧数据：如果有 deviceCode 但没有 deviceRequirement，自动构造
     const requirement = step.deviceRequirement || (step.deviceCode ? {
@@ -158,6 +291,63 @@ function scheduleStep(
     // 计算持续时间
     const duration = getStepDuration(step);
 
+    // 特殊处理：调配步骤需要计算 segments（等待段+最终搅拌段）
+    let segments: OccupancySegment[] | undefined;
+    let finalEndTime = actualStartTime + duration;
+    
+    if (step.processType === ProcessType.COMPOUNDING && step.mustAfter && step.mustAfter.length > 0) {
+        // 计算所有上游输入步骤的最大结束时间
+        // 从 timeline 或 stepStartTimes 中查找依赖步骤的结束时间
+        let maxUpstreamEndTime = actualStartTime;
+        step.mustAfter.forEach(depId => {
+            // 先从 timeline 中查找（已调度的步骤）
+            const depOccupancy = timeline.find(o => o.stepId === depId);
+            if (depOccupancy) {
+                maxUpstreamEndTime = Math.max(maxUpstreamEndTime, depOccupancy.endTime);
+            } else {
+                // 回退：从 stepStartTimes 计算（假设默认时长）
+                const depStartTime = stepStartTimes.get(depId);
+                if (depStartTime !== undefined) {
+                    const depDuration = allSteps?.find(({ step }) => step.id === depId)?.step 
+                        ? getStepDuration(allSteps.find(({ step }) => step.id === depId)!.step)
+                        : 10;
+                    maxUpstreamEndTime = Math.max(maxUpstreamEndTime, depStartTime + depDuration);
+                }
+            }
+        });
+
+        // 如果上游完成时间晚于设备可用时间，则存在等待段
+        if (maxUpstreamEndTime > actualStartTime) {
+            const mixStartTime = maxUpstreamEndTime;
+            finalEndTime = mixStartTime + duration;
+
+            segments = [
+                {
+                    kind: 'wait',
+                    start: actualStartTime,
+                    end: mixStartTime,
+                    label: '等待上游完成'
+                },
+                {
+                    kind: 'mix',
+                    start: mixStartTime,
+                    end: finalEndTime,
+                    label: '最终搅拌'
+                }
+            ];
+        } else {
+            // 没有等待，直接搅拌
+            segments = [
+                {
+                    kind: 'mix',
+                    start: actualStartTime,
+                    end: finalEndTime,
+                    label: '最终搅拌'
+                }
+            ];
+        }
+    }
+
     // 创建占用记录
     const occupancy: DeviceOccupancy = {
         deviceCode: device.deviceCode,
@@ -165,10 +355,11 @@ function scheduleStep(
         stepLabel: step.label,
         processId,
         startTime: actualStartTime,
-        duration,
-        endTime: actualStartTime + duration,
+        duration: finalEndTime - actualStartTime, // 总占用时长（包含等待）
+        endTime: finalEndTime,
         dependencies: step.mustAfter,
         state: 'planned',
+        segments,
     };
 
     timeline.push(occupancy);

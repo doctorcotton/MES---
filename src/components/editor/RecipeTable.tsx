@@ -10,7 +10,6 @@ import {
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog,
   DialogContent,
@@ -364,7 +363,7 @@ export function RecipeTable() {
   const [connectionModalProcessId, setConnectionModalProcessId] = useState<string | null>(null);
   const [paramsModalSubStepId, setParamsModalSubStepId] = useState<string | null>(null);
   // 编辑状态：追踪正在编辑的子步骤ID和具体字段
-  const [editingSubStep, setEditingSubStep] = useState<{ id: string; field: 'label' | 'deviceCode' | 'ingredients' } | null>(null);
+  const [editingSubStep, setEditingSubStep] = useState<{ id: string; field: 'label' | 'deviceCode' | 'ingredients' | 'estimatedDuration' } | null>(null);
   const [editingProcessId, setEditingProcessId] = useState<string | null>(null);
   const [editSubStepValues, setEditSubStepValues] = useState<Partial<SubStep>>({});
   const [editProcessValues, setEditProcessValues] = useState<{ name?: string; description?: string }>({});
@@ -529,7 +528,7 @@ export function RecipeTable() {
     setAddSubStepProcessId(null);
   };
 
-  const handleStartEditSubStep = (subStep: SubStep, field: 'label' | 'deviceCode' | 'ingredients') => {
+  const handleStartEditSubStep = (subStep: SubStep, field: 'label' | 'deviceCode' | 'ingredients' | 'estimatedDuration') => {
     setEditingSubStep({ id: subStep.id, field });
     setEditSubStepValues(subStep);
     // 找到该子步骤所属的工艺段
@@ -562,6 +561,20 @@ export function RecipeTable() {
             // 如果只有deviceCode没有type，尝试保留原有type或默认为OTHER
             deviceType: currentRequirement.deviceType || DeviceType.OTHER,
             exclusiveUse: currentRequirement.exclusiveUse ?? true
+          };
+        }
+      }
+
+      // 如果修改了预计耗时，确保格式正确
+      if (updatedValues.estimatedDuration !== undefined) {
+        if (updatedValues.estimatedDuration.value === 0 || !updatedValues.estimatedDuration.value) {
+          // 如果值为0或空，删除 estimatedDuration
+          delete updatedValues.estimatedDuration;
+        } else {
+          // 确保单位是 'min'
+          updatedValues.estimatedDuration = {
+            value: updatedValues.estimatedDuration.value,
+            unit: 'min'
           };
         }
       }
@@ -853,7 +866,7 @@ export function RecipeTable() {
                             </TableCell>
                             <TableCell className="max-w-[150px] overflow-hidden">
                               {isEditingIngredients ? (
-                                <Textarea
+                                <textarea
                                   value={editSubStepValues.ingredients ?? subStep.ingredients}
                                   onChange={(e) =>
                                     setEditSubStepValues({
@@ -866,19 +879,32 @@ export function RecipeTable() {
                                     if (e.key === 'Escape') handleCancelEdit();
                                   }}
                                   autoFocus
-                                  rows={2}
-                                  className="w-full max-w-full text-sm"
+                                  rows={3}
+                                  className="w-full text-xs px-2 py-1 border border-gray-300 rounded resize-none focus:outline-none focus:ring-1 focus:ring-blue-500"
                                   disabled={!canEdit}
                                 />
                               ) : (
-                                <span
-                                  className={`text-xs ${canEdit ? 'cursor-pointer hover:text-blue-600' : 'cursor-not-allowed opacity-60'}`}
-                                  onClick={() => canEdit && handleStartEditSubStep(subStep, 'ingredients')}
-                                >
-                                  {getMaterials(subStep).length > 0
-                                    ? getMaterials(subStep).map(m => m.name).join('、')
-                                    : subStep.ingredients}
-                                </span>
+                                (() => {
+                                  const materials = getMaterials(subStep);
+                                  const hasContent = materials.length > 0 || (subStep.ingredients && subStep.ingredients.trim() !== '');
+                                  const displayText = materials.length > 0
+                                    ? materials.map(m => m.name).join('、')
+                                    : subStep.ingredients;
+
+                                  return (
+                                    <span
+                                      className={cn(
+                                        'text-xs',
+                                        canEdit ? 'cursor-pointer hover:text-blue-600' : 'cursor-not-allowed opacity-60',
+                                        'min-w-[60px] inline-block',
+                                        !hasContent && canEdit && 'border border-dashed border-gray-300 px-2 py-1 rounded text-gray-400'
+                                      )}
+                                      onClick={() => canEdit && handleStartEditSubStep(subStep, 'ingredients')}
+                                    >
+                                      {hasContent ? displayText : '点击添加'}
+                                    </span>
+                                  );
+                                })()
                               )}
                             </TableCell>
                             <TableCell className="max-w-[200px]">
@@ -907,11 +933,54 @@ export function RecipeTable() {
                               </div>
                             </TableCell>
                             <TableCell>
-                              <span className="text-xs text-gray-600">
-                                {subStep.estimatedDuration
-                                  ? `${subStep.estimatedDuration.value}${subStep.estimatedDuration.unit}`
-                                  : '-'}
-                              </span>
+                              {(() => {
+                                const isEditingDuration = editingSubStep?.id === subStep.id && editingSubStep?.field === 'estimatedDuration';
+                                const durationValue = subStep.estimatedDuration?.value ?? 0;
+
+                                if (isEditingDuration) {
+                                  return (
+                                    <Input
+                                      type="number"
+                                      min="0"
+                                      step="0.1"
+                                      value={editSubStepValues.estimatedDuration?.value ?? durationValue}
+                                      onChange={(e) => {
+                                        const value = parseFloat(e.target.value) || 0;
+                                        setEditSubStepValues({
+                                          ...editSubStepValues,
+                                          estimatedDuration: {
+                                            value,
+                                            unit: 'min'
+                                          }
+                                        });
+                                      }}
+                                      onBlur={() => handleSaveEditSubStep(process.id, subStep.id)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') handleSaveEditSubStep(process.id, subStep.id);
+                                        if (e.key === 'Escape') handleCancelEdit();
+                                      }}
+                                      autoFocus
+                                      disabled={!canEdit}
+                                      className="w-20 text-xs"
+                                    />
+                                  );
+                                }
+
+                                return (
+                                  <span
+                                    className={cn(
+                                      'text-xs text-gray-600',
+                                      canEdit ? 'cursor-pointer hover:text-blue-600' : 'cursor-not-allowed opacity-60',
+                                      !subStep.estimatedDuration && canEdit && 'border border-dashed border-gray-300 px-2 py-1 rounded text-gray-400'
+                                    )}
+                                    onClick={() => canEdit && handleStartEditSubStep(subStep, 'estimatedDuration')}
+                                  >
+                                    {subStep.estimatedDuration
+                                      ? `${subStep.estimatedDuration.value}${subStep.estimatedDuration.unit}`
+                                      : canEdit ? '点击添加' : '-'}
+                                  </span>
+                                );
+                              })()}
                             </TableCell>
                             <TableCell>
                               <div className="flex flex-col space-y-1">

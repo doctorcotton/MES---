@@ -2,6 +2,7 @@ import { useMemo, useState, useRef, useEffect } from 'react';
 import { useRecipeStore } from '@/store/useRecipeStore';
 import { calculateScheduleWithContext } from '@/services/scheduler';
 import { DeviceOccupancy, ConfigurationLevel } from '@/types/scheduling';
+import { Process } from '@/types/recipe';
 import { defaultDevicePool } from '@/data/devicePool';
 import { ZoomIn, ZoomOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -55,7 +56,7 @@ function calculateTimeAxisParams(containerWidth: number, maxTime: number, zoomLe
 }
 
 export function GanttView() {
-    const { processes, setHoveredNodeId } = useRecipeStore();
+    const { processes, edges, setHoveredNodeId } = useRecipeStore();
     const [zoomLevel, setZoomLevel] = useState(1); // 1 = 100%, 2 = 200%
     const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
     const [containerWidth, setContainerWidth] = useState(800); // 默认宽度
@@ -92,16 +93,21 @@ export function GanttView() {
     // 计算调度结果（使用设备配置上下文）
     // 添加 processes 顺序签名作为依赖，确保顺序变化时重新计算
     const processOrderSignature = useMemo(() => processes.map(p => p.id).join(','), [processes]);
+    const edgesSignature = useMemo(() => edges.map(e => `${e.source}-${e.target}`).join(','), [edges]);
     const scheduleResult = useMemo(() => {
-        return calculateScheduleWithContext(processes, deviceContext);
-    }, [processes, processOrderSignature, deviceContext]);
+        return calculateScheduleWithContext(processes, deviceContext, edges);
+    }, [processes, processOrderSignature, deviceContext, edges, edgesSignature]);
 
-    // 获取所有设备（按照流程图中步骤出现的顺序）
+    // 获取所有设备（严格按表格JSON的首次出现顺序）
+    // 过滤掉不在范围内的设备：UHT机、灌装机、管道过滤器1等
+    const excludedDevices = new Set(['UHT机', '灌装机', '管道过滤器1']);
+    
     const devices = useMemo(() => {
-        const deviceOrderMap = new Map<string, number>();
-        let orderIndex = 0;
+        // 第一优先：从表格JSON（processes → subSteps）按首次出现顺序提取设备
+        const orderedDevicesFromTable: string[] = [];
+        const seenDevices = new Set<string>();
         
-        // 按照 processes 的顺序遍历
+        // 按照 processes 数组顺序遍历
         processes.forEach(process => {
             // 按照 order 字段排序子步骤
             const sortedSteps = [...process.node.subSteps].sort((a, b) => a.order - b.order);
@@ -109,39 +115,46 @@ export function GanttView() {
             sortedSteps.forEach(step => {
                 // 获取设备编号（优先从 deviceRequirement 获取）
                 const deviceCode = step.deviceRequirement?.deviceCode || step.deviceCode;
-                if (deviceCode && !deviceOrderMap.has(deviceCode)) {
-                    deviceOrderMap.set(deviceCode, orderIndex++);
+                if (deviceCode && !seenDevices.has(deviceCode) && !excludedDevices.has(deviceCode)) {
+                    // 首次出现，添加到顺序列表
+                    orderedDevicesFromTable.push(deviceCode);
+                    seenDevices.add(deviceCode);
                 }
             });
         });
         
-        // 从 timeline 中获取所有设备（包括调度器分配的）
-        const allDevices = new Set<string>();
+        // 第二优先：从 timeline 中找出不在表格顺序中的设备（例如按类型动态分配出来的）
+        const devicesFromTimeline = new Set<string>();
         scheduleResult.timeline.forEach(occupancy => {
-            allDevices.add(occupancy.deviceCode);
-        });
-        
-        // 按首次出现顺序排序
-        const orderedDevices = Array.from(allDevices).sort((a, b) => {
-            const orderA = deviceOrderMap.get(a) ?? Infinity;
-            const orderB = deviceOrderMap.get(b) ?? Infinity;
-            return orderA - orderB;
-        });
-        
-        // 添加设备池中未出现的设备（保持字母排序）
-        defaultDevicePool.forEach(d => {
-            if (!allDevices.has(d.deviceCode)) {
-                orderedDevices.push(d.deviceCode);
+            if (!excludedDevices.has(occupancy.deviceCode) && !seenDevices.has(occupancy.deviceCode)) {
+                devicesFromTimeline.add(occupancy.deviceCode);
             }
         });
         
-        return orderedDevices;
+        // 追加到末尾（按timeline中出现的顺序）
+        const allocatedDevices = Array.from(devicesFromTimeline);
+        allocatedDevices.forEach(deviceCode => {
+            orderedDevicesFromTable.push(deviceCode);
+            seenDevices.add(deviceCode);
+        });
+        
+        // 最后：追加设备池中剩余的空行占位（确保相关设备在甘特图有行位）
+        defaultDevicePool.forEach(d => {
+            if (!seenDevices.has(d.deviceCode) && !excludedDevices.has(d.deviceCode)) {
+                orderedDevicesFromTable.push(d.deviceCode);
+                seenDevices.add(d.deviceCode);
+            }
+        });
+        
+        return orderedDevicesFromTable;
     }, [processes, scheduleResult]);
 
-    // 计算时间范围（最长80分钟）
+    // 计算时间范围（自适应，不再硬截断80分钟）
     const maxTime = useMemo(() => {
         const calculatedMax = Math.max(...scheduleResult.timeline.map(o => o.endTime), 60);
-        return Math.min(calculatedMax, 80); // 最长80分钟
+        // 向上取整到最近的10分钟，并添加10%的边距
+        const roundedMax = Math.ceil(calculatedMax / 10) * 10;
+        return Math.max(roundedMax + 10, 60); // 至少60分钟，添加10分钟边距
     }, [scheduleResult]);
 
     // 监听容器宽度变化
@@ -287,6 +300,7 @@ export function GanttView() {
                         timeAxisParams={timeAxisParams}
                         selectedStepId={selectedStepId}
                         onOccupancyClick={handleOccupancyClick}
+                        processes={processes}
                     />
                 ))}
             </div>
@@ -302,7 +316,7 @@ export function GanttView() {
                             </span>
                         )}
                     </span>
-                    <span>总耗时: {scheduleResult.totalDuration} 分钟</span>
+                    <span>总耗时: {scheduleResult.totalDuration.toFixed(1)} 分钟（溶解+调配过程）</span>
                     {scheduleResult.timeline.filter(o => o.duration > 50).length > 0 && (
                         <span className="text-red-600">
                             超过50分钟: {scheduleResult.timeline.filter(o => o.duration > 50).length} 个
@@ -324,6 +338,48 @@ export function GanttView() {
     );
 }
 
+// 构建 tooltip 文本（无 segments）
+function buildTooltip(occupancy: DeviceOccupancy, isLongDuration: boolean, hasEstimatedDuration: boolean = true): string {
+    const parts = [
+        `${occupancy.stepLabel}`,
+        `总占用: ${occupancy.duration}分钟`,
+        `[${occupancy.startTime}-${occupancy.endTime}]`
+    ];
+    if (!hasEstimatedDuration) {
+        parts.push('⚠️ 未填预计耗时，按1显示（仅表达先后/并行）');
+    }
+    if (isLongDuration) {
+        parts.push('⚠️ 超过50分钟');
+    }
+    return parts.join(' | ');
+}
+
+// 构建 tooltip 文本（有 segments）
+function buildSegmentsTooltip(occupancy: DeviceOccupancy, isLongDuration: boolean, hasEstimatedDuration: boolean = true): string {
+    const parts = [
+        `${occupancy.stepLabel}`,
+        `总占用: ${occupancy.duration}分钟`,
+        `[${occupancy.startTime}-${occupancy.endTime}]`
+    ];
+    
+    if (!hasEstimatedDuration) {
+        parts.push('⚠️ 未填预计耗时，按1显示（仅表达先后/并行）');
+    }
+    
+    if (occupancy.segments && occupancy.segments.length > 0) {
+        occupancy.segments.forEach((segment) => {
+            const segmentDuration = segment.end - segment.start;
+            parts.push(`${segment.label || segment.kind}: ${segmentDuration.toFixed(1)}分钟 [${segment.start}-${segment.end}]`);
+        });
+    }
+    
+    if (isLongDuration) {
+        parts.push('⚠️ 超过50分钟');
+    }
+    
+    return parts.join('\n');
+}
+
 function GanttRow({
     deviceCode,
     occupancies,
@@ -331,6 +387,7 @@ function GanttRow({
     timeAxisParams,
     selectedStepId,
     onOccupancyClick,
+    processes,
 }: {
     deviceCode: string;
     occupancies: DeviceOccupancy[];
@@ -338,6 +395,7 @@ function GanttRow({
     timeAxisParams: { unitWidth: number; labelInterval: number; gridInterval: number; totalWidth: number };
     selectedStepId: string | null;
     onOccupancyClick: (stepId: string) => void;
+    processes: Process[];
 }) {
     return (
         <div className="gantt-row flex border-b h-12">
@@ -366,6 +424,67 @@ function GanttRow({
                     // 超过50分钟的任务标红
                     const isLongDuration = occupancy.duration > 50;
                     const shouldBeRed = occupancy.state === 'delayed' || isLongDuration;
+                    
+                    // 检查步骤是否有预计耗时
+                    const step = processes
+                        .find(p => p.id === occupancy.processId)
+                        ?.node.subSteps.find(s => s.id === occupancy.stepId);
+                    const hasEstimatedDuration = step?.estimatedDuration?.value !== undefined && step.estimatedDuration.value > 0;
+                    
+                    // 如果有 segments，渲染分段
+                    if (occupancy.segments && occupancy.segments.length > 0) {
+                        return (
+                            <div
+                                key={occupancy.stepId}
+                                className={`absolute cursor-pointer transition-all shadow-sm
+                                    ${isSelected ? 'ring-2 ring-yellow-400 ring-offset-1 opacity-100 z-10' : 'hover:opacity-90'}
+                                `}
+                                style={{
+                                    left: `${(occupancy.startTime / maxTime) * 100}%`,
+                                    width: `${(occupancy.duration / maxTime) * 100}%`,
+                                    minWidth: '2px',
+                                    top: '4px',
+                                    bottom: '4px',
+                                }}
+                                title={buildSegmentsTooltip(occupancy, isLongDuration, hasEstimatedDuration)}
+                                onClick={() => onOccupancyClick(occupancy.stepId)}
+                            >
+                                {occupancy.segments.map((segment, idx) => {
+                                    const segmentLeft = ((segment.start - occupancy.startTime) / occupancy.duration) * 100;
+                                    const segmentWidth = ((segment.end - segment.start) / occupancy.duration) * 100;
+                                    const isWait = segment.kind === 'wait';
+                                    return (
+                                        <div
+                                            key={idx}
+                                            className={`absolute h-full text-xs p-1 rounded overflow-hidden whitespace-nowrap text-white
+                                                ${isWait 
+                                                    ? 'bg-gray-400 opacity-70' 
+                                                    : shouldBeRed ? 'bg-red-500' : 'bg-blue-500'
+                                                }
+                                            `}
+                                            style={{
+                                                left: `${segmentLeft}%`,
+                                                width: `${segmentWidth}%`,
+                                                height: '100%',
+                                            }}
+                                        >
+                                            {segmentWidth > 5 && segment.label && (
+                                                <span className="text-[10px]">{segment.label}</span>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                                {/* 显示步骤标签（在最上层） */}
+                                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                    <span className="text-xs font-medium text-white drop-shadow-md">
+                                        {occupancy.stepLabel}
+                                    </span>
+                                </div>
+                            </div>
+                        );
+                    }
+                    
+                    // 没有 segments，使用原来的渲染方式
                     return (
                         <div
                             key={occupancy.stepId}
@@ -380,7 +499,7 @@ function GanttRow({
                                 top: '4px',
                                 bottom: '4px',
                             }}
-                            title={`${occupancy.stepLabel} (${occupancy.duration}分钟) [${occupancy.startTime}-${occupancy.endTime}]${isLongDuration ? ' ⚠️ 超过50分钟' : ''}`}
+                            title={buildTooltip(occupancy, isLongDuration, hasEstimatedDuration)}
                             onClick={() => onOccupancyClick(occupancy.stepId)}
                         >
                             {occupancy.stepLabel}

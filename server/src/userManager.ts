@@ -3,13 +3,14 @@ import { OnlineUser, SocketUser } from './types';
 class UserManager {
   private users: Map<string, OnlineUser> = new Map(); // socketId -> user
 
-  addUser(socketId: string, userId: string, userName: string): OnlineUser {
+  addUser(socketId: string, userId: string, userName: string, ip?: string): OnlineUser {
     const user: OnlineUser = {
       userId,
       userName,
       socketId,
       mode: 'view',
       connectedAt: new Date().toISOString(),
+      ip,
     };
     this.users.set(socketId, user);
     return user;

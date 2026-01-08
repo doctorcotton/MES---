@@ -6,6 +6,7 @@ import { useCollabStore } from '@/store/useCollabStore';
 import { StatusBar } from '@/components/collab/StatusBar';
 import { DemoModeBanner } from '@/components/collab/DemoModeBanner';
 import { Download, Upload, RotateCcw, Save, Loader2, Settings } from 'lucide-react';
+import { validateRecipeConnections, formatValidationMessage } from '@/utils/recipeValidator';
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
@@ -51,6 +52,23 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       console.error('[保存] 错误:userId 为空');
       alert('用户ID未设置,请刷新页面重试');
       return;
+    }
+
+    // 获取当前配方数据进行校验
+    const { processes, edges } = useRecipeStore.getState();
+
+    // 执行连线校验
+    const validationResult = validateRecipeConnections(processes, edges);
+
+    // 如果有警告，提示用户确认
+    if (validationResult.warnings.length > 0) {
+      const warningMessage = formatValidationMessage(validationResult);
+      const confirmMessage = `${warningMessage}\n\n是否仍然继续保存？`;
+
+      if (!window.confirm(confirmMessage)) {
+        console.log('[保存] 用户取消保存（连线校验警告）');
+        return;
+      }
     }
 
     console.log('[保存] 用户点击保存按钮', {
