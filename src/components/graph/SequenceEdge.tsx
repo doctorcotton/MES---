@@ -24,47 +24,50 @@ function generateCorridorPath(
 ): string {
   // 计算走廊Y坐标
   let corridorY = targetY - CORRIDOR_CLEARANCE_PX;
-  
+
   // 夹紧条件1：确保走廊不压住目标节点
   const minCorridorY = targetY - MIN_TARGET_CLEARANCE_PX;
   corridorY = Math.min(corridorY, minCorridorY);
-  
+
   // 夹紧条件2：确保有足够的下降距离
   const minSourceY = sourceY + MIN_SOURCE_DROP_PX;
   corridorY = Math.max(corridorY, minSourceY);
-  
-  // 如果源点已经在目标点下方，使用简单的垂直路径
-  if (sourceY >= targetY) {
-    return `M ${sourceX} ${sourceY} L ${targetX} ${targetY}`;
-  }
-  
+
   // 计算水平移动方向
   const horizontalDistance = Math.abs(targetX - sourceX);
-  
-  // 如果水平距离很小，使用简单的垂直路径
-  if (horizontalDistance < CORNER_RADIUS * 2) {
-    return `M ${sourceX} ${sourceY} L ${targetX} ${targetY}`;
+
+  // 修复点2：不允许斜线 - 统一使用走廊路径
+  // 当源点在目标点下方时，调整走廊Y到源点下方
+  if (sourceY >= targetY) {
+    // 源点在目标点下方，走廊设置在源点下方
+    corridorY = sourceY + CORRIDOR_CLEARANCE_PX;
+    // 确保走廊不压住目标节点
+    corridorY = Math.max(corridorY, targetY + MIN_TARGET_CLEARANCE_PX);
   }
-  
+
+  // 动态调整圆角半径（确保不超过水平距离的一半）
+  // 注意：如果圆角几何不成立，应该通过布局侧吸附解决，这里只做动态调整
+  const effectiveCornerRadius = Math.min(CORNER_RADIUS, horizontalDistance / 2);
+
   // 生成三段式路径（带圆角）
   // 1. 从源点垂直下降到走廊（留出圆角空间）
-  const verticalDropEndY = corridorY - CORNER_RADIUS;
-  
+  const verticalDropEndY = corridorY - effectiveCornerRadius;
+
   // 2. 圆角过渡到水平段
   // 如果目标在右侧，圆角向右；如果目标在左侧，圆角向左
   const isTargetRight = targetX > sourceX;
-  const cornerX1 = isTargetRight 
-    ? sourceX + CORNER_RADIUS 
-    : sourceX - CORNER_RADIUS;
-  
+  const cornerX1 = isTargetRight
+    ? sourceX + effectiveCornerRadius
+    : sourceX - effectiveCornerRadius;
+
   // 3. 水平移动到目标X附近（留出圆角空间）
-  const cornerX2 = isTargetRight 
-    ? targetX - CORNER_RADIUS 
-    : targetX + CORNER_RADIUS;
-  
+  const cornerX2 = isTargetRight
+    ? targetX - effectiveCornerRadius
+    : targetX + effectiveCornerRadius;
+
   // 4. 圆角过渡到垂直段
-  const verticalRiseStartY = corridorY + CORNER_RADIUS;
-  
+  const verticalRiseStartY = corridorY + effectiveCornerRadius;
+
   // 构建完整路径
   const path = [
     `M ${sourceX} ${sourceY}`,                    // 起点
@@ -74,7 +77,7 @@ function generateCorridorPath(
     `Q ${targetX} ${corridorY} ${targetX} ${verticalRiseStartY}`, // 圆角2
     `L ${targetX} ${targetY}`,                    // 垂直上升
   ].join(' ');
-  
+
   return path;
 }
 
@@ -93,7 +96,7 @@ export const SequenceEdge = memo(
     // 判断是否使用走廊路由
     const incomingTotal = data?.incomingTotal;
     const useCorridor = incomingTotal !== undefined && incomingTotal > 1;
-    
+
     // 根据路由模式生成路径
     const edgePath = useMemo(() => {
       if (useCorridor) {
@@ -129,12 +132,12 @@ export const SequenceEdge = memo(
         stroke: '#9ca3af',
         strokeWidth: 2,
       };
-      
+
       if (isEditingDashed) {
         baseStyle.strokeDasharray = '6 6';
         baseStyle.opacity = 0.7; // 稍微降低不透明度以突出编辑态
       }
-      
+
       return baseStyle;
     }, [isEditingDashed]);
 

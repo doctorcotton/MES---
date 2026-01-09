@@ -22,7 +22,7 @@ interface LayoutControllerProps {
  * 4. 通知父组件布局完成
  */
 export function LayoutController({ onLayoutComplete, onNodesUpdate, layoutTrigger }: LayoutControllerProps) {
-  const { getNodes, setNodes, getEdges, fitView } = useReactFlow();
+  const { getNodes, setNodes, getEdges, fitView, getViewport } = useReactFlow();
   const nodesInitialized = useNodesInitialized();
   const hasLayoutedRef = useRef(false);
   const layoutTriggerRef = useRef(layoutTrigger);
@@ -249,6 +249,39 @@ export function LayoutController({ onLayoutComplete, onNodesUpdate, layoutTrigge
 
           if (totalWeight > 0) {
             convergenceX = weightedXSum / totalWeight;
+          }
+        }
+
+        // 修复点1：布局吸附 - 当汇聚点与某入边源节点X接近时，吸附对齐
+        if (convergenceX > 0 && parallelSegments.length > 0) {
+          // 收集所有进入汇聚点的并行分支末节点X坐标
+          const incomingXs: number[] = [];
+          parallelSegments.forEach(segment => {
+            if (segment.nodes.length > 0) {
+              const lastNode = segment.nodes[segment.nodes.length - 1];
+              const lastNodeX = nodePositions[lastNode.id]?.x;
+              if (lastNodeX !== undefined) {
+                incomingXs.push(lastNodeX);
+              }
+            }
+          });
+
+          if (incomingXs.length > 0) {
+            // 找到与 convergenceX 最近的入边源节点X
+            const xNearest = incomingXs.reduce((best, x) =>
+              Math.abs(x - convergenceX) < Math.abs(best - convergenceX) ? x : best
+            , incomingXs[0]);
+
+            // 获取当前缩放级别，将屏幕像素阈值转换为画布单位
+            const viewport = getViewport();
+            const zoom = viewport.zoom || 1;
+            const SNAP_THRESHOLD_SCREEN_PX = 24; // 屏幕像素阈值
+            const snapThresholdWorld = SNAP_THRESHOLD_SCREEN_PX / zoom;
+
+            // 如果距离小于阈值，吸附到最近的入边源节点X
+            if (Math.abs(convergenceX - xNearest) < snapThresholdWorld) {
+              convergenceX = xNearest;
+            }
           }
         }
 
