@@ -1,12 +1,99 @@
-import { FlowNode } from '../types/recipe';
+import { ProcessType, ProcessTypes } from '../types/recipe';
 import { ProcessSegment } from './segmentIdentifier';
 
 /**
  * 并行工艺段布局配置
  */
 export interface ParallelLayoutConfig {
-  targetEdgeLength: number;  // 目标连线长度（固定值）
+  targetEdgeLength: number;  // 目标连线长度（固定值，用于非萃取段）
   initialY: number;          // 初始Y坐标
+}
+
+/**
+ * 获取工艺段的类型（基于第一步的工艺类型）
+ */
+function getSegmentType(segment: ProcessSegment): ProcessType | 'unknown' {
+  if (segment.nodes.length === 0) return 'unknown';
+  
+  const firstNode = segment.nodes[0];
+  
+  // 展开模式：从 subStep 获取
+  if (firstNode.data.subStep) {
+    return firstNode.data.subStep.processType;
+  }
+  
+  // 折叠模式：从 firstProcessType 获取
+  if (firstNode.data.firstProcessType) {
+    return firstNode.data.firstProcessType;
+  }
+  
+  return 'unknown';
+}
+
+/**
+ * 计算萃取段的自适应边距长度
+ * 
+ * 公式: edgeLen(n) = clamp(base * s * sqrt(3 / max(n, 3)), minEdge, base)
+ * 
+ * @param nodeCount 段内节点数量
+ * @param base 基础边距（默认 120）
+ * @param scale 缩放因子（默认 0.96，让 n=4 时约等于 100）
+ * @param minEdge 最小边距（默认 70，防止太挤）
+ * @returns 计算后的边距长度
+ */
+function calculateExtractionEdgeLength(
+  nodeCount: number,
+  base: number = 120,
+  scale: number = 0.96,
+  minEdge: number = 70
+): number {
+  if (nodeCount <= 3) {
+    return base; // n≤3 时保持基础值
+  }
+  
+  const ratio = Math.sqrt(3 / Math.max(nodeCount, 3));
+  const calculated = base * scale * ratio;
+  
+  // 夹紧到 [minEdge, base] 范围
+  return Math.max(minEdge, Math.min(calculated, base));
+}
+
+/**
+ * 计算段的相对布局（假设 startY=0）
+ * 
+ * @returns { relativePositions: Record<string, number>, lastNodeBottom: number }
+ */
+function calculateRelativeLayout(
+  segment: ProcessSegment,
+  nodeHeights: Record<string, number>,
+  edgeLength: number
+): { relativePositions: Record<string, number>; lastNodeBottom: number } {
+  const relativePositions: Record<string, number> = {};
+  let currentY = 0;
+  
+  segment.nodes.forEach((node, idx) => {
+    relativePositions[node.id] = currentY;
+    
+    if (idx < segment.nodes.length - 1) {
+      const nextNode = segment.nodes[idx + 1];
+      const currentNodeHeight = nodeHeights[node.id] || 120;
+      const nextNodeHeight = nodeHeights[nextNode.id] || 120;
+      
+      const spacing =
+        currentNodeHeight / 2 +
+        edgeLength +
+        nextNodeHeight / 2;
+      
+      currentY += spacing;
+    }
+  });
+  
+  // 计算最后一个节点的底部位置（相对坐标）
+  const lastNode = segment.nodes[segment.nodes.length - 1];
+  const lastNodeHeight = nodeHeights[lastNode.id] || 120;
+  const lastNodeBottom = relativePositions[lastNode.id] + lastNodeHeight / 2;
+  
+  return { relativePositions, lastNodeBottom };
 }
 
 /**
@@ -20,9 +107,10 @@ export interface SerialLayoutConfig {
  * 布局并行工艺段
  * 
  * 核心逻辑：
- * - 所有并行段起点Y坐标相同（视觉上对齐）
- * - 每个段内部连线长度固定（targetEdgeLength）
- * - 段之间终点Y坐标不同（因为子步骤数量不同）
+ * - 按"第一步工艺类型"分组（萃取类/溶解类/香精类等）
+ * - 组内头部对齐：同类型段的起点Y坐标相同
+ * - 组间Y偏移：短类型整体下移，让各组末端更接近，尾线长度接近常量（≈120px）
+ * - 萃取类自适应压缩：子步骤越多，段内间距越小（平滑公式+上下限夹紧）
  */
 export function layoutParallelSegments(
   segments: ProcessSegment[],
@@ -30,61 +118,128 @@ export function layoutParallelSegments(
   config: ParallelLayoutConfig
 ): Record<string, number> {
   const nodeYPositions: Record<string, number> = {};
-  
   const isDebug = typeof window !== 'undefined' && localStorage.getItem('debug_layout') === 'true';
 
-  segments.forEach((segment, segmentIndex) => {
-    if (isDebug) {
-      console.group(`[Debug] 工艺段间距计算: segment-${segmentIndex} (${segment.nodes.length}个节点)`);
+  if (isDebug) {
+    console.group('[Debug] 并行工艺段布局：按类型分组对齐');
+  }
+
+  // 步骤1: 按类型分组
+  const segmentsByType = new Map<ProcessType | 'unknown', ProcessSegment[]>();
+  segments.forEach(segment => {
+    const segmentType = getSegmentType(segment);
+    if (!segmentsByType.has(segmentType)) {
+      segmentsByType.set(segmentType, []);
+    }
+    segmentsByType.get(segmentType)!.push(segment);
+  });
+
+  if (isDebug) {
+    console.log('工艺段分组:', Array.from(segmentsByType.entries()).map(([type, segs]) => 
+      `${type}: ${segs.length}个段`
+    ));
+  }
+
+  // 步骤2: 计算每个段的相对布局和边距
+  interface SegmentLayoutInfo {
+    segment: ProcessSegment;
+    segmentType: ProcessType | 'unknown';
+    edgeLength: number;
+    relativePositions: Record<string, number>;
+    lastNodeBottom: number;
+  }
+
+  const segmentLayouts: SegmentLayoutInfo[] = [];
+  
+  segments.forEach(segment => {
+    const segmentType = getSegmentType(segment);
+    const nodeCount = segment.nodes.length;
+    
+    // 计算边距：萃取类使用自适应公式，其他类型使用固定值
+    let edgeLength: number;
+    if (segmentType === ProcessTypes.EXTRACTION) {
+      edgeLength = calculateExtractionEdgeLength(nodeCount, config.targetEdgeLength);
+    } else {
+      edgeLength = config.targetEdgeLength;
     }
     
-    let currentY = config.initialY;
-
-    segment.nodes.forEach((node, idx) => {
-      nodeYPositions[node.id] = currentY;
-
-      if (idx < segment.nodes.length - 1) {
-        const nextNode = segment.nodes[idx + 1];
-        const currentNodeHeight = nodeHeights[node.id] || 120;
-        const nextNodeHeight = nodeHeights[nextNode.id] || 120;
-
-        // 计算间距：节点高度的一半 + 目标连线长度 + 下个节点高度的一半
-        const spacing =
-          currentNodeHeight / 2 +      // 当前节点底部到中心
-          config.targetEdgeLength +    // 连线长度（固定）
-          nextNodeHeight / 2;          // 下个节点中心到顶部
-
-        if (isDebug) {
-          console.log(`${node.id} → ${nextNode.id}:`);
-          console.log('  当前节点中心Y:', currentY.toFixed(1), 'px');
-          console.log('  当前节点高度:', currentNodeHeight, 'px');
-          console.log('  目标间距:', config.targetEdgeLength, 'px');
-          console.log('  下个节点高度:', nextNodeHeight, 'px');
-          console.log('  计算: H₁/2 + gap + H₂/2 =', 
-            `${currentNodeHeight / 2} + ${config.targetEdgeLength} + ${nextNodeHeight / 2} = ${spacing.toFixed(1)}`);
-          console.log('  下个节点中心Y:', (currentY + spacing).toFixed(1), 'px');
-          
-          // 验证实际间距
-          const sourceBottom = currentY + currentNodeHeight / 2;
-          const targetTop = (currentY + spacing) - nextNodeHeight / 2;
-          const actualGap = targetTop - sourceBottom;
-          const gapError = Math.abs(actualGap - config.targetEdgeLength);
-          console.log('  验证: 源底', sourceBottom.toFixed(1), '→ 目标顶', targetTop.toFixed(1), 
-            '= 实际间距', actualGap.toFixed(1), 'px (误差', gapError.toFixed(1), 'px)');
-        }
-
-        currentY += spacing;
-      } else {
-        if (isDebug) {
-          console.log(`${node.id}: 段最后一个节点，中心Y = ${currentY.toFixed(1)}px`);
-        }
-      }
-    });
+    // 计算相对布局（假设 startY=0）
+    const { relativePositions, lastNodeBottom } = calculateRelativeLayout(
+      segment,
+      nodeHeights,
+      edgeLength
+    );
     
+    segmentLayouts.push({
+      segment,
+      segmentType,
+      edgeLength,
+      relativePositions,
+      lastNodeBottom,
+    });
+
     if (isDebug) {
-      console.groupEnd();
+      console.log(`段 ${segment.id}: 类型=${segmentType}, 节点数=${nodeCount}, 边距=${edgeLength.toFixed(1)}px, 末端相对位置=${lastNodeBottom.toFixed(1)}px`);
     }
   });
+
+  // 步骤3: 计算每个类型组的 span（组内最大 lastNodeBottom）
+  const groupSpans = new Map<ProcessType | 'unknown', number>();
+  segmentsByType.forEach((typeSegments, type) => {
+    const maxSpan = Math.max(
+      ...typeSegments.map(seg => {
+        const layout = segmentLayouts.find(l => l.segment.id === seg.id);
+        return layout ? layout.lastNodeBottom : 0;
+      })
+    );
+    groupSpans.set(type, maxSpan);
+    
+    if (isDebug) {
+      console.log(`类型组 ${type}: ${typeSegments.length}个段, span=${maxSpan.toFixed(1)}px`);
+    }
+  });
+
+  // 步骤4: 计算全局最大 span
+  const globalMaxSpan = Math.max(...Array.from(groupSpans.values()));
+  
+  if (isDebug) {
+    console.log(`全局最大 span: ${globalMaxSpan.toFixed(1)}px`);
+  }
+
+  // 步骤5: 确定每组 startY（组内头部对齐，组间偏移让末端接近）
+  const groupStartYs = new Map<ProcessType | 'unknown', number>();
+  const baseStartY = config.initialY;
+  
+  segmentsByType.forEach((_typeSegments, type) => {
+    const groupSpan = groupSpans.get(type) || 0;
+    // 短组下移：groupStartY = baseStartY + (globalMaxSpan - groupSpan)
+    const groupStartY = baseStartY + (globalMaxSpan - groupSpan);
+    groupStartYs.set(type, groupStartY);
+    
+    if (isDebug) {
+      console.log(`类型组 ${type}: startY=${groupStartY.toFixed(1)}px (偏移=${(globalMaxSpan - groupSpan).toFixed(1)}px)`);
+    }
+  });
+
+  // 步骤6: 应用偏移，写入最终位置
+  segmentLayouts.forEach(({ segment, segmentType, relativePositions }) => {
+    const groupStartY = groupStartYs.get(segmentType) || baseStartY;
+    
+    segment.nodes.forEach(node => {
+      const relativeY = relativePositions[node.id];
+      nodeYPositions[node.id] = groupStartY + relativeY;
+    });
+
+    if (isDebug) {
+      const firstNode = segment.nodes[0];
+      const lastNode = segment.nodes[segment.nodes.length - 1];
+      console.log(`段 ${segment.id}: 首节点Y=${nodeYPositions[firstNode.id].toFixed(1)}px, 末节点Y=${nodeYPositions[lastNode.id].toFixed(1)}px`);
+    }
+  });
+
+  if (isDebug) {
+    console.groupEnd();
+  }
 
   return nodeYPositions;
 }
@@ -237,7 +392,7 @@ export function validateSegmentLayout(
   serialSegments: ProcessSegment[],
   nodePositions: Record<string, { x: number; y: number }>,
   nodeHeights: Record<string, number>,
-  targetEdgeLength: number
+  _targetEdgeLength: number // 保留用于接口兼容性，实际验证基于计算出的实际位置
 ): SegmentLayoutValidation {
   // 计算标准差的辅助函数
   function calculateStdDev(values: number[]): number {

@@ -592,6 +592,8 @@ export const useFlowNodes = (): FlowNode[] => {
           });
         });
       } else {
+        // 获取第一步工艺类型（用于布局分组）
+        const firstSubStep = process.node.subSteps[0];
         tempNodes.push({
           id: process.id,
           type: 'processSummaryNode',
@@ -604,6 +606,7 @@ export const useFlowNodes = (): FlowNode[] => {
             subStepCount: process.node.subSteps.length,
             isExpanded: false,
             displayOrder,
+            firstProcessType: firstSubStep?.processType,
           },
         });
       }

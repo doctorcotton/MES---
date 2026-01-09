@@ -240,8 +240,8 @@ export function LayoutController({ onLayoutComplete, onNodesUpdate, layoutTrigge
             // 计算该分支的质心 X
             const segmentCentroidX = validNodes.reduce((sum, n) => sum + nodePositions[n.id].x, 0) / validNodes.length;
 
-            // 权重 = 节点数量 (子树规模)
-            const weight = validNodes.length;
+            // 权重 = 节点数量的平方根 (弱化长分支的影响，避免汇聚点过度偏向)
+            const weight = Math.sqrt(validNodes.length);
 
             weightedXSum += segmentCentroidX * weight;
             totalWeight += weight;

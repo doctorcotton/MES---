@@ -1,9 +1,26 @@
 import { io, Socket } from 'socket.io-client';
 
-// 优先使用环境变量配置 WebSocket 地址，否则根据当前页面的主机名推导后端地址
-const SOCKET_URL =
-  (import.meta as any).env.VITE_SOCKET_URL ||
-  `${window.location.protocol}//${window.location.hostname}:3001`;
+// 优先使用环境变量配置 WebSocket 地址
+// 如果通过 nginx 代理访问（端口为 80 或空），使用相对路径（自动使用当前域名和协议）
+// 否则根据当前页面的主机名推导后端地址
+const getSocketUrl = () => {
+  // 优先使用环境变量
+  if ((import.meta as any).env.VITE_SOCKET_URL) {
+    return (import.meta as any).env.VITE_SOCKET_URL;
+  }
+  
+  // 如果通过 nginx 代理访问（端口为 80 或空），使用相对路径
+  const port = window.location.port;
+  if (port === '80' || port === '') {
+    // 使用当前域名，Socket.IO 会自动添加 /socket.io/ 路径
+    return window.location.origin;
+  }
+  
+  // 开发环境，直接连接后端
+  return `${window.location.protocol}//${window.location.hostname}:3001`;
+};
+
+const SOCKET_URL = getSocketUrl();
 
 class SocketService {
   private socket: Socket | null = null;

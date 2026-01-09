@@ -347,6 +347,7 @@ export interface FlowNode {
     subStepCount?: number;
     isExpanded?: boolean;
     displayOrder?: number; // 显示顺序（基于 processes 数组索引 + 1），用于显示 P1、P2 等标签
+    firstProcessType?: ProcessType; // 第一步工艺类型（用于布局分组）
     // 子步骤节点数据
     subStep?: SubStep;
     // 输入来源信息（主要用于调配节点）
