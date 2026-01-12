@@ -336,18 +336,60 @@ export const initialProcesses: Process[] = [
     }
   },
 
-  // P7工艺段：UHT灭菌
+  // P7工艺段：后处理（过滤+磁棒吸附）
   {
     id: "P7",
+    name: "后处理",
+    description: "最终过滤和磁棒吸附",
+    node: {
+      id: "P7",
+      type: "processNode",
+      label: "后处理",
+      subSteps: [
+        {
+          id: "P7-substep-1",
+          order: 1,
+          processType: ProcessType.FILTRATION,
+          label: "1μm过滤",
+          deviceCode: "管道",
+          ingredients: "-",
+          params: {
+            processType: ProcessType.FILTRATION,
+            filtrationParams: {
+              precision: { value: 1, unit: 'μm' }
+            }
+          }
+        },
+        {
+          id: "P7-substep-2",
+          order: 2,
+          processType: ProcessType.MAGNETIC_ABSORPTION,
+          label: "磁棒吸附",
+          deviceCode: "管道",
+          ingredients: "-",
+          params: {
+            processType: ProcessType.MAGNETIC_ABSORPTION,
+            magneticAbsorptionParams: {
+              purpose: '除杂'
+            }
+          }
+        }
+      ]
+    }
+  },
+
+  // P8工艺段：UHT灭菌
+  {
+    id: "P8",
     name: "UHT灭菌",
     description: "超高温瞬时灭菌工艺",
     node: {
-      id: "P7",
+      id: "P8",
       type: "processNode",
       label: "UHT灭菌",
       subSteps: [
         {
-          id: "P7-substep-1",
+          id: "P8-substep-1",
           order: 1,
           processType: ProcessType.UHT,
           label: "UHT灭菌",
@@ -366,18 +408,46 @@ export const initialProcesses: Process[] = [
     }
   },
 
-  // P8工艺段：灌装
+  // P9工艺段：无菌罐暂存
   {
-    id: "P8",
+    id: "P9",
+    name: "无菌罐",
+    description: "无菌暂存",
+    node: {
+      id: "P9",
+      type: "processNode",
+      label: "无菌罐",
+      subSteps: [
+        {
+          id: "P9-substep-1",
+          order: 1,
+          processType: ProcessType.ASEPTIC_TANK,
+          label: "无菌罐",
+          deviceCode: "无菌罐",
+          ingredients: "-",
+          params: {
+            processType: ProcessType.ASEPTIC_TANK,
+            asepticTankParams: {
+              container: '无菌罐'
+            }
+          }
+        }
+      ]
+    }
+  },
+
+  // P10工艺段：灌装
+  {
+    id: "P10",
     name: "灌装",
     description: "无菌灌装工艺",
     node: {
-      id: "P8",
+      id: "P10",
       type: "processNode",
       label: "灌装",
       subSteps: [
         {
-          id: "P8-substep-1",
+          id: "P10-substep-1",
           order: 1,
           processType: ProcessType.FILLING,
           label: "灌装",
@@ -387,62 +457,6 @@ export const initialProcesses: Process[] = [
             processType: ProcessType.FILLING,
             fillingParams: {
               fillingMethod: '无菌灌装'
-            }
-          }
-        }
-      ]
-    }
-  },
-
-  // 后处理工艺段：最终过滤、磁棒吸附、无菌罐
-  {
-    id: "PostProcessing",
-    name: "后处理",
-    description: "最终过滤、磁棒吸附和无菌暂存",
-    node: {
-      id: "PostProcessing",
-      type: "processNode",
-      label: "后处理",
-      subSteps: [
-        {
-          id: "PostProcessing-substep-1",
-          order: 1,
-          processType: ProcessType.FILTRATION,
-          label: "1μm过滤",
-          deviceCode: "管道",
-          ingredients: "-",
-          params: {
-            processType: ProcessType.FILTRATION,
-            filtrationParams: {
-              precision: { value: 1, unit: 'μm' }
-            }
-          }
-        },
-        {
-          id: "PostProcessing-substep-2",
-          order: 2,
-          processType: ProcessType.MAGNETIC_ABSORPTION,
-          label: "磁棒吸附",
-          deviceCode: "管道",
-          ingredients: "-",
-          params: {
-            processType: ProcessType.MAGNETIC_ABSORPTION,
-            magneticAbsorptionParams: {
-              purpose: '除杂'
-            }
-          }
-        },
-        {
-          id: "PostProcessing-substep-3",
-          order: 3,
-          processType: ProcessType.ASEPTIC_TANK,
-          label: "无菌罐",
-          deviceCode: "无菌罐",
-          ingredients: "-",
-          params: {
-            processType: ProcessType.ASEPTIC_TANK,
-            asepticTankParams: {
-              container: '无菌罐'
             }
           }
         }
@@ -463,12 +477,11 @@ export const initialEdges: RecipeEdge[] = [
   { id: "e4", source: "P4", target: "P6", type: "sequenceEdge", data: { sequenceOrder: 5 } },
   { id: "e5", source: "P5", target: "P6", type: "sequenceEdge", data: { sequenceOrder: 6 } },
 
-  // P6到后处理
-  { id: "e6", source: "P6", target: "PostProcessing", type: "sequenceEdge", data: { sequenceOrder: 1 } },
-
-  // 后处理到P7和P8
-  { id: "e7", source: "PostProcessing", target: "P7", type: "sequenceEdge", data: { sequenceOrder: 1 } },
-  { id: "e8", source: "P7", target: "P8", type: "sequenceEdge", data: { sequenceOrder: 1 } }
+  // P6调配 → P7后处理 → P8 UHT → P9无菌罐 → P10灌装
+  { id: "e6", source: "P6", target: "P7", type: "sequenceEdge", data: { sequenceOrder: 1 } },
+  { id: "e7", source: "P7", target: "P8", type: "sequenceEdge", data: { sequenceOrder: 1 } },
+  { id: "e8", source: "P8", target: "P9", type: "sequenceEdge", data: { sequenceOrder: 1 } },
+  { id: "e9", source: "P9", target: "P10", type: "sequenceEdge", data: { sequenceOrder: 1 } }
 ];
 
 /**
