@@ -28,6 +28,10 @@ export const ProcessTypes = {
   COOLING: 'cooling' as const,                // 冷却
   HOLDING: 'holding' as const,                // 暂存
   MEMBRANE_FILTRATION: 'membraneFiltration' as const, // 膜过滤
+  UHT: 'uht' as const,                        // UHT灭菌
+  FILLING: 'filling' as const,               // 灌装
+  MAGNETIC_ABSORPTION: 'magneticAbsorption' as const, // 磁棒吸附
+  ASEPTIC_TANK: 'asepticTank' as const,       // 无菌罐
 } as const;
 
 /**
@@ -51,6 +55,10 @@ export const BASE_PROCESS_TYPES = [
   ProcessTypes.COOLING,
   ProcessTypes.HOLDING,
   ProcessTypes.MEMBRANE_FILTRATION,
+  ProcessTypes.UHT,
+  ProcessTypes.FILLING,
+  ProcessTypes.MAGNETIC_ABSORPTION,
+  ProcessTypes.ASEPTIC_TANK,
 ] as const;
 
 /**
@@ -236,6 +244,38 @@ export interface MembraneFiltrationParams {
 }
 
 /**
+ * UHT灭菌参数接口
+ */
+export interface UhtParams {
+  sterilizationTemp?: { value: number; tolerance: number; unit: '℃' };  // 灭菌温度，如 112±2℃
+  sterilizationTime?: { value: number; unit: 's' };                     // 灭菌时间，如 30s
+  coolingTempMax?: number;               // 冷却后最高温度（℃），如 30
+}
+
+/**
+ * 灌装参数接口
+ */
+export interface FillingParams {
+  fillingMethod?: string;                // 灌装方式，如 "无菌灌装"
+  fillingVolume?: { value: number; unit: 'mL' | 'L' };  // 灌装量（可选）
+}
+
+/**
+ * 磁棒吸附参数接口
+ */
+export interface MagneticAbsorptionParams {
+  purpose?: string;                      // 处理目的，如 "除杂"
+}
+
+/**
+ * 无菌罐参数接口
+ */
+export interface AsepticTankParams {
+  holdingTime?: number;                  // 暂存时间（min）
+  container?: string;                    // 容器名称
+}
+
+/**
  * 可辨识联合类型 - 工艺节点数据
  */
 export type ProcessNodeData =
@@ -249,6 +289,10 @@ export type ProcessNodeData =
   | ({ processType: typeof ProcessTypes.COOLING } & { coolingParams: CoolingParams })
   | ({ processType: typeof ProcessTypes.HOLDING } & { holdingParams: HoldingParams })
   | ({ processType: typeof ProcessTypes.MEMBRANE_FILTRATION } & { membraneFiltrationParams: MembraneFiltrationParams })
+  | ({ processType: typeof ProcessTypes.UHT } & { uhtParams: UhtParams })
+  | ({ processType: typeof ProcessTypes.FILLING } & { fillingParams: FillingParams })
+  | ({ processType: typeof ProcessTypes.MAGNETIC_ABSORPTION } & { magneticAbsorptionParams: MagneticAbsorptionParams })
+  | ({ processType: typeof ProcessTypes.ASEPTIC_TANK } & { asepticTankParams: AsepticTankParams })
   | ({ processType: typeof ProcessTypes.OTHER } & { params: string })
   | ({ processType: string } & { [key: string]: any }); // 支持动态扩展类型
 

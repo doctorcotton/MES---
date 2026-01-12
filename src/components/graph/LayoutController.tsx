@@ -278,9 +278,41 @@ export function LayoutController({ onLayoutComplete, onNodesUpdate, layoutTrigge
             const SNAP_THRESHOLD_SCREEN_PX = 24; // 屏幕像素阈值
             const snapThresholdWorld = SNAP_THRESHOLD_SCREEN_PX / zoom;
 
-            // 如果距离小于阈值，吸附到最近的入边源节点X
-            if (Math.abs(convergenceX - xNearest) < snapThresholdWorld) {
-              convergenceX = xNearest;
+            // 修复点3：圆角可行性检查 - 确保进入汇聚点的边有足够水平空间画圆角
+            // 圆角半径要求（需要至少 2*CORNER_RADIUS 的水平距离）
+            const CORNER_RADIUS = 20; // 与 SequenceEdge.tsx 中的常量保持一致
+            const MIN_HORIZONTAL_DISTANCE = CORNER_RADIUS * 2; // 40px
+
+            // 如果距离小于阈值，考虑吸附
+            const distanceToNearest = Math.abs(convergenceX - xNearest);
+            if (distanceToNearest < snapThresholdWorld) {
+              // 如果吸附后距离仍然不足，调整到满足最小距离的位置
+              if (distanceToNearest < MIN_HORIZONTAL_DISTANCE) {
+                // 调整 convergenceX 使其与最近入边保持最小距离（确保圆角几何成立）
+                convergenceX = convergenceX > xNearest 
+                  ? xNearest + MIN_HORIZONTAL_DISTANCE 
+                  : xNearest - MIN_HORIZONTAL_DISTANCE;
+              } else {
+                // 距离足够，可以安全吸附
+                convergenceX = xNearest;
+              }
+            } else {
+              // 距离超过阈值，但检查是否所有入边都满足最小距离要求
+              const edgesWithInsufficientSpace = incomingXs.filter(x => 
+                Math.abs(x - convergenceX) < MIN_HORIZONTAL_DISTANCE
+              );
+
+              if (edgesWithInsufficientSpace.length > 0) {
+                // 找到需要最大调整的入边
+                const problematicX = edgesWithInsufficientSpace.reduce((worst, x) => 
+                  Math.abs(x - convergenceX) < Math.abs(worst - convergenceX) ? x : worst
+                , edgesWithInsufficientSpace[0]);
+
+                // 调整 convergenceX 以满足最小距离要求
+                convergenceX = convergenceX > problematicX
+                  ? problematicX + MIN_HORIZONTAL_DISTANCE
+                  : problematicX - MIN_HORIZONTAL_DISTANCE;
+              }
             }
           }
         }

@@ -6,6 +6,7 @@ import { ScheduleResult } from '../types/scheduling'; // ScheduleResult is a typ
 import { defaultDevicePool } from '../data/devicePool';
 import { useMemo } from 'react';
 import { socketService } from '../services/socketService';
+import { duplicateSubStepInProcess, moveSubStepBetweenProcesses } from '../utils/subStepOps';
 
 interface RecipeStore {
   // 主数据结构：工艺段列表
@@ -47,6 +48,8 @@ interface RecipeStore {
   updateSubStep: (processId: string, subStepId: string, data: Partial<SubStep>) => void;
   removeSubStep: (processId: string, subStepId: string) => void;
   reorderSubSteps: (processId: string, newOrder: string[]) => void;
+  duplicateSubStep: (processId: string, subStepId: string, insertAfter?: boolean) => void;
+  moveSubStep: (sourceProcessId: string, subStepId: string, targetProcessId: string, targetIndex: number) => void;
 
   // Edge actions
   addEdge: (edge: RecipeEdge) => void;
@@ -337,12 +340,12 @@ export const useRecipeStore = create<RecipeStore>((set, get) => ({
         processes: state.processes.map((p) =>
           p.id === processId
             ? {
-              ...p,
-              node: {
-                ...p.node,
-                subSteps: reorderedSubSteps,
-              },
-            }
+                ...p,
+                node: {
+                  ...p.node,
+                  subSteps: reorderedSubSteps,
+                },
+              }
             : p
         ),
         metadata: {
@@ -350,6 +353,83 @@ export const useRecipeStore = create<RecipeStore>((set, get) => ({
           updatedAt: new Date().toISOString(),
         },
       };
+    });
+  },
+
+  duplicateSubStep: (processId, subStepId, insertAfter = true) => {
+    set((state) => {
+      const process = state.processes.find(p => p.id === processId);
+      if (!process) return state;
+
+      try {
+        const updatedProcess = duplicateSubStepInProcess(process, subStepId, insertAfter);
+        
+        // 如果 editingContext 指向被复制的子步骤，需要更新到新复制的子步骤
+        let newEditingContext = state.editingContext;
+        if (newEditingContext?.processId === processId && newEditingContext?.subStepId === subStepId) {
+          // 找到新复制的子步骤（插入位置后的第一个）
+          const sourceIndex = process.node.subSteps.findIndex(s => s.id === subStepId);
+          const insertIndex = insertAfter ? sourceIndex + 1 : sourceIndex;
+          const newSubStep = updatedProcess.node.subSteps[insertIndex];
+          if (newSubStep) {
+            newEditingContext = {
+              processId,
+              subStepId: newSubStep.id,
+            };
+          }
+        }
+
+        return {
+          processes: state.processes.map((p) =>
+            p.id === processId ? updatedProcess : p
+          ),
+          editingContext: newEditingContext,
+          metadata: {
+            ...state.metadata,
+            updatedAt: new Date().toISOString(),
+          },
+        };
+      } catch (error) {
+        console.error('Failed to duplicate subStep:', error);
+        return state;
+      }
+    });
+  },
+
+  moveSubStep: (sourceProcessId, subStepId, targetProcessId, targetIndex) => {
+    set((state) => {
+      try {
+        const result = moveSubStepBetweenProcesses(
+          state.processes,
+          sourceProcessId,
+          subStepId,
+          targetProcessId,
+          targetIndex
+        );
+
+        const { processes: updatedProcesses, newSubStepId } = result;
+
+        // 如果 editingContext 指向被移动的子步骤，需要更新 processId 和 subStepId（如果 ID 变化了）
+        let newEditingContext = state.editingContext;
+        if (newEditingContext?.subStepId === subStepId) {
+          newEditingContext = {
+            processId: targetProcessId,
+            subStepId: newSubStepId || subStepId, // 使用新的 ID（如果跨段移动时 ID 变化了）
+          };
+        }
+
+        return {
+          processes: updatedProcesses,
+          editingContext: newEditingContext,
+          metadata: {
+            ...state.metadata,
+            updatedAt: new Date().toISOString(),
+          },
+        };
+      } catch (error) {
+        console.error('Failed to move subStep:', error);
+        return state;
+      }
     });
   },
 

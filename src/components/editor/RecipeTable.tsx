@@ -33,9 +33,11 @@ import {
   useSensor,
   useSensors,
   DragEndEvent,
+  DragStartEvent,
+  DragOverEvent,
+  DragOverlay,
 } from '@dnd-kit/core';
 import {
-  arrayMove,
   SortableContext,
   sortableKeyboardCoordinates,
   useSortable,
@@ -48,6 +50,17 @@ import { ConnectionModal } from './ConnectionModal';
 import { ParamsModal } from './ParamsModal';
 import { AddSubStepDialog } from './AddSubStepDialog';
 import { Plus, Trash2, Lock, ChevronDown, ChevronRight, Edit2, Copy, ArrowUp, ArrowDown } from 'lucide-react';
+import { 
+  getSubStepDragIntent, 
+  makeProcessId, 
+  makeSubStepId, 
+  makeSlotId,
+  parseProcessId,
+  parseSubStepId,
+  isProcessId,
+  isSubStepId,
+} from '@/utils/dndIds';
+import { useDroppable } from '@dnd-kit/core';
 import { SubStep, ProcessType, getEquipmentConfig, getMaterials, Process } from '@/types/recipe';
 import { DeviceType } from '@/types/equipment';
 import { DeviceRequirement } from '@/types/scheduling';
@@ -67,6 +80,512 @@ const getProcessTypeLabel = (type: ProcessType): string => {
   };
   return labels[type];
 };
+
+// 渲染子步骤参数显示 - Dynamic Component usage
+const SubStepParamsCell = ({ subStep }: { subStep: SubStep }) => {
+  const { getConfigsByProcessType } = useFieldConfigStore();
+  const configs = getConfigsByProcessType(subStep.processType);
+
+  // 从嵌套参数结构中获取值的辅助函数 - 重复逻辑
+  // 理想情况下应该是辅助工具函数
+  const getParamValue = (key: string): any => {
+    const paramKeyMaps: Record<string, string> = {
+      [ProcessType.DISSOLUTION]: 'dissolutionParams',
+      [ProcessType.COMPOUNDING]: 'compoundingParams',
+      [ProcessType.FILTRATION]: 'filtrationParams',
+      [ProcessType.TRANSFER]: 'transferParams',
+      [ProcessType.FLAVOR_ADDITION]: 'flavorAdditionParams',
+      [ProcessType.EXTRACTION]: 'extractionParams',
+    };
+
+    if (subStep.processType === ProcessType.OTHER) {
+      if (key === 'params') return (subStep.params as any).params;
+      return null;
+    }
+
+    const groupKey = paramKeyMaps[subStep.processType];
+    if (!groupKey || !(subStep.params as any)[groupKey]) return null;
+    return (subStep.params as any)[groupKey][key];
+  };
+
+  // 格式化条件值
+  const formatConditionValue = (value: { value: number; unit: string; condition?: string }) => {
+    if (!value) return '';
+    const condition = value.condition || '';
+    return `${condition}${value.value}${value.unit}`;
+  };
+
+  const renderFieldValue = (config: FieldConfig, value: any) => {
+    if (value === undefined || value === null) return null;
+
+    let displayValue = '';
+
+    if (config.inputType === 'select' && config.options) {
+      const opt = config.options.find((o: any) => o.value === value);
+      displayValue = opt ? opt.label : value;
+    } else if (config.inputType === 'conditionValue') {
+      displayValue = formatConditionValue(value);
+    } else if (config.inputType === 'range' || config.inputType === 'waterRatio') {
+      if (value.min !== undefined && value.max !== undefined) {
+        displayValue = `${value.min}-${value.max}`;
+      } else if (value.max !== undefined) {
+        displayValue = `≤${value.max}`;
+      } else if (value.min !== undefined) {
+        displayValue = `≥${value.min}`;
+      }
+      if (config.unit) displayValue += config.unit;
+    } else if (config.inputType === 'object' && config.fields) {
+      // 处理对象类型: 使用 fields 元数据来格式化
+      const parts: string[] = [];
+
+      config.fields.forEach(fieldConfig => {
+        const fieldValue = value[fieldConfig.key];
+        if (fieldValue !== undefined && fieldValue !== null) {
+          // 根据字段语义添加前缀
+          if (fieldConfig.key === 'max') {
+            parts.push(`≤${fieldValue}`);
+          } else if (fieldConfig.key === 'min') {
+            parts.push(`≥${fieldValue}`);
+          } else if (fieldConfig.key === 'value') {
+            parts.push(String(fieldValue));
+          } else if (fieldConfig.key !== 'unit') {
+            // 跳过 unit 字段,它会被附加到末尾
+            parts.push(String(fieldValue));
+          }
+        }
+      });
+
+      // 查找 unit 字段
+      const unitField = config.fields.find(f => f.key === 'unit');
+      const unit = unitField ? value[unitField.key] : '';
+
+      displayValue = parts.join('') + unit;
+    } else if (config.inputType === 'array' && Array.isArray(value)) {
+      // 处理数组类型
+      if (value.length === 0) {
+        displayValue = '无';
+      } else if (config.itemFields) {
+        // 对象数组: 显示每个对象的主要字段
+        displayValue = value.map(item => {
+          // 优先显示 name 字段
+          return item.name || item.label || JSON.stringify(item);
+        }).join(', ');
+      } else {
+        // 简单数组
+        displayValue = value.join(', ');
+      }
+    } else if (config.inputType === 'number' || config.inputType === 'text') {
+      displayValue = String(value);
+      if (config.unit) displayValue += config.unit;
+    }
+    return displayValue;
+  };
+
+  if (subStep.processType === ProcessType.OTHER) {
+    return <span className="text-xs text-left break-words">{getParamValue('params')}</span>;
+  }
+
+  return (
+    <div className="flex flex-col gap-1 text-xs text-left">
+      {configs.slice(0, 3).map(config => { // Limit to 3 fields for table view
+        const val = getParamValue(config.key);
+        if (val === undefined || val === null) return null;
+        const displayValue = renderFieldValue(config, val);
+        return (
+          <span key={config.key} className="truncate block" title={`${config.label}: ${displayValue}`}>
+            <span className="text-slate-500 mr-1">{config.label}:</span>
+            {displayValue}
+          </span>
+        );
+      })}
+    </div>
+  );
+};
+
+// 可拖动的子步骤行组件
+function SortableSubStepRow({
+  subStep,
+  process,
+  isEditingLabel,
+  isEditingDeviceCode,
+  isEditingIngredients,
+  isHovered,
+  editingSubStep,
+  editSubStepValues,
+  setEditSubStepValues,
+  handleStartEditSubStep,
+  handleSaveEditSubStep,
+  handleCancelEdit,
+  canEdit,
+  setParamsModalSubStepId,
+  removeSubStep,
+  duplicateSubStep,
+  setHoveredNodeId,
+}: {
+  subStep: SubStep;
+  process: Process;
+  isEditingLabel: boolean;
+  isEditingDeviceCode: boolean;
+  isEditingIngredients: boolean;
+  isHovered: boolean;
+  editingSubStep: { id: string; field: 'label' | 'deviceCode' | 'ingredients' | 'estimatedDuration' } | null;
+  editSubStepValues: Partial<SubStep>;
+  setEditSubStepValues: (values: Partial<SubStep>) => void;
+  handleStartEditSubStep: (subStep: SubStep, field: 'label' | 'deviceCode' | 'ingredients' | 'estimatedDuration') => void;
+  handleSaveEditSubStep: (processId: string, subStepId: string) => void;
+  handleCancelEdit: () => void;
+  canEdit: boolean;
+  setParamsModalSubStepId: (id: string | null) => void;
+  removeSubStep: (processId: string, subStepId: string) => void;
+  duplicateSubStep: (processId: string, subStepId: string, insertAfter?: boolean) => void;
+  setHoveredNodeId: (id: string | null) => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
+    id: makeSubStepId(subStep.id),
+    disabled: !canEdit,
+    data: {
+      type: 'subStep',
+      processId: process.id,
+      subStepId: subStep.id,
+    },
+    animateLayoutChanges: () => false, // 关闭跨容器时的布局动画
+  });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  const handleDuplicate = () => {
+    if (!canEdit) return;
+    duplicateSubStep(process.id, subStep.id, true);
+  };
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <TableRow
+          ref={setNodeRef}
+          style={style}
+          id={`row-${subStep.id}`}
+          className={isHovered ? 'bg-blue-50' : ''}
+          onMouseEnter={() => setHoveredNodeId(subStep.id)}
+          onMouseLeave={() => setHoveredNodeId(null)}
+        >
+          <TableCell>
+            {canEdit && (
+              <div
+                {...attributes}
+                {...listeners}
+                className="cursor-grab active:cursor-grabbing"
+                title="拖动排序"
+              >
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 12 12"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <circle cx="2" cy="2" r="1" fill="currentColor" />
+                  <circle cx="6" cy="2" r="1" fill="currentColor" />
+                  <circle cx="10" cy="2" r="1" fill="currentColor" />
+                  <circle cx="2" cy="6" r="1" fill="currentColor" />
+                  <circle cx="6" cy="6" r="1" fill="currentColor" />
+                  <circle cx="10" cy="6" r="1" fill="currentColor" />
+                  <circle cx="2" cy="10" r="1" fill="currentColor" />
+                  <circle cx="6" cy="10" r="1" fill="currentColor" />
+                  <circle cx="10" cy="10" r="1" fill="currentColor" />
+                </svg>
+              </div>
+            )}
+            {!canEdit && <span className="text-xs text-gray-400">↑</span>}
+          </TableCell>
+          <TableCell>
+            <span className="font-mono text-sm">{subStep.order}</span>
+          </TableCell>
+          <TableCell>
+            {isEditingLabel ? (
+              <Input
+                value={editSubStepValues.label ?? subStep.label}
+                onChange={(e) =>
+                  setEditSubStepValues({ ...editSubStepValues, label: e.target.value })
+                }
+                onBlur={() => handleSaveEditSubStep(process.id, subStep.id)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleSaveEditSubStep(process.id, subStep.id);
+                  if (e.key === 'Escape') handleCancelEdit();
+                }}
+                autoFocus
+                disabled={!canEdit}
+              />
+            ) : (
+              <span
+                className={cn(
+                  canEdit ? 'cursor-pointer hover:text-blue-600' : 'cursor-not-allowed opacity-60',
+                  'min-w-[80px] inline-block',
+                  !subStep.label && canEdit && 'border border-dashed border-gray-300 px-2 py-1 rounded text-gray-400'
+                )}
+                onClick={() => canEdit && handleStartEditSubStep(subStep, 'label')}
+              >
+                {subStep.label || '未命名'}
+                {!canEdit && <Lock className="ml-1 inline h-3 w-3" />}
+              </span>
+            )}
+          </TableCell>
+          <TableCell>
+            <span className="text-xs text-gray-600">
+              {getProcessTypeLabel(subStep.processType)}
+            </span>
+          </TableCell>
+          <TableCell>
+            {isEditingDeviceCode ? (
+              <Input
+                value={editSubStepValues.deviceCode ?? subStep.deviceCode}
+                onChange={(e) =>
+                  setEditSubStepValues({
+                    ...editSubStepValues,
+                    deviceCode: e.target.value,
+                  })
+                }
+                onBlur={() => handleSaveEditSubStep(process.id, subStep.id)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleSaveEditSubStep(process.id, subStep.id);
+                  if (e.key === 'Escape') handleCancelEdit();
+                }}
+                autoFocus
+                disabled={!canEdit}
+              />
+            ) : (
+              <span
+                className={`${canEdit ? 'cursor-pointer hover:text-blue-600' : 'cursor-not-allowed opacity-60'}`}
+                onClick={() => canEdit && handleStartEditSubStep(subStep, 'deviceCode')}
+              >
+                {getEquipmentConfig(subStep)?.deviceCode || subStep.deviceCode}
+              </span>
+            )}
+          </TableCell>
+          <TableCell className="max-w-[150px] overflow-hidden">
+            {isEditingIngredients ? (
+              <textarea
+                value={editSubStepValues.ingredients ?? subStep.ingredients}
+                onChange={(e) =>
+                  setEditSubStepValues({
+                    ...editSubStepValues,
+                    ingredients: e.target.value,
+                  })
+                }
+                onBlur={() => handleSaveEditSubStep(process.id, subStep.id)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') handleCancelEdit();
+                }}
+                autoFocus
+                rows={3}
+                className="w-full text-xs px-2 py-1 border border-gray-300 rounded resize-none focus:outline-none focus:ring-1 focus:ring-blue-500"
+                disabled={!canEdit}
+              />
+            ) : (
+              (() => {
+                const materials = getMaterials(subStep);
+                const hasContent = materials.length > 0 || (subStep.ingredients && subStep.ingredients.trim() !== '');
+                const displayText = materials.length > 0
+                  ? materials.map(m => m.name).join('、')
+                  : subStep.ingredients;
+
+                return (
+                  <span
+                    className={cn(
+                      'text-xs',
+                      canEdit ? 'cursor-pointer hover:text-blue-600' : 'cursor-not-allowed opacity-60',
+                      'min-w-[60px] inline-block',
+                      !hasContent && canEdit && 'border border-dashed border-gray-300 px-2 py-1 rounded text-gray-400'
+                    )}
+                    onClick={() => canEdit && handleStartEditSubStep(subStep, 'ingredients')}
+                  >
+                    {hasContent ? displayText : '点击添加'}
+                  </span>
+                );
+              })()
+            )}
+          </TableCell>
+          <TableCell className="max-w-[200px]">
+            <div className="overflow-hidden">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  if (!canEdit) {
+                    alert('需要编辑权限或进入演示模式');
+                    return;
+                  }
+                  setParamsModalSubStepId(subStep.id);
+                }}
+                className="w-full h-auto py-2 px-3 text-left min-h-[2rem]"
+                disabled={!canEdit}
+                title={!canEdit ? '需要编辑权限' : '点击编辑参数'}
+              >
+                <div className="flex items-start w-full overflow-hidden">
+                  <Edit2 className="mr-2 h-3 w-3 mt-1 shrink-0 opacity-50" />
+                  <div className="flex-1 min-w-0">
+                    <SubStepParamsCell subStep={subStep} />
+                  </div>
+                </div>
+              </Button>
+            </div>
+          </TableCell>
+          <TableCell>
+            {(() => {
+              const isEditingDuration = editingSubStep?.id === subStep.id && editingSubStep?.field === 'estimatedDuration';
+              const durationValue = subStep.estimatedDuration?.value ?? 0;
+
+              if (isEditingDuration) {
+                return (
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    value={editSubStepValues.estimatedDuration?.value ?? durationValue}
+                    onChange={(e) => {
+                      const value = parseFloat(e.target.value) || 0;
+                      setEditSubStepValues({
+                        ...editSubStepValues,
+                        estimatedDuration: {
+                          value,
+                          unit: 'min'
+                        }
+                      });
+                    }}
+                    onBlur={() => handleSaveEditSubStep(process.id, subStep.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleSaveEditSubStep(process.id, subStep.id);
+                      if (e.key === 'Escape') handleCancelEdit();
+                    }}
+                    autoFocus
+                    disabled={!canEdit}
+                    className="w-20 text-xs"
+                  />
+                );
+              }
+
+              return (
+                <span
+                  className={cn(
+                    'text-xs text-gray-600',
+                    canEdit ? 'cursor-pointer hover:text-blue-600' : 'cursor-not-allowed opacity-60',
+                    !subStep.estimatedDuration && canEdit && 'border border-dashed border-gray-300 px-2 py-1 rounded text-gray-400'
+                  )}
+                  onClick={() => canEdit && handleStartEditSubStep(subStep, 'estimatedDuration')}
+                >
+                  {subStep.estimatedDuration
+                    ? `${subStep.estimatedDuration.value}${subStep.estimatedDuration.unit}`
+                    : canEdit ? '点击添加' : '-'}
+                </span>
+              );
+            })()}
+          </TableCell>
+          <TableCell>
+            <div className="flex flex-col space-y-1">
+              {subStep.deviceRequirement && (
+                <span className="text-xs bg-purple-50 text-purple-700 px-1 py-0.5 rounded border border-purple-100 truncate max-w-[100px]" title="设备需求">
+                  {subStep.deviceRequirement.deviceCode || subStep.deviceRequirement.deviceType || '设备需求'}
+                </span>
+              )}
+              {subStep.canParallelWith && subStep.canParallelWith.length > 0 && (
+                <span className="text-xs bg-green-50 text-green-700 px-1 py-0.5 rounded border border-green-100" title="可并行">
+                  并行:{subStep.canParallelWith.length}
+                </span>
+              )}
+            </div>
+          </TableCell>
+          <TableCell>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => {
+                if (!canEdit) {
+                  alert('需要编辑权限或进入演示模式');
+                  return;
+                }
+                removeSubStep(process.id, subStep.id);
+              }}
+              disabled={!canEdit}
+              title={!canEdit ? '需要编辑权限或进入演示模式' : '删除'}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </TableCell>
+        </TableRow>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        {canEdit && (
+          <>
+            <ContextMenuItem onClick={handleDuplicate}>
+              <Copy className="mr-2 h-4 w-4" />
+              复制步骤（插入到后面）
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+          </>
+        )}
+        <ContextMenuItem
+          onClick={() => {
+            if (!canEdit) {
+              alert('需要编辑权限或进入演示模式');
+              return;
+            }
+            removeSubStep(process.id, subStep.id);
+          }}
+          disabled={!canEdit}
+        >
+          <Trash2 className="mr-2 h-4 w-4" />
+          删除步骤
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
+// 插入槽位行组件（用于精确插入位置）
+function InsertSlotRow({
+  processId,
+  index,
+  canEdit,
+}: {
+  processId: string;
+  index: number;
+  canEdit: boolean;
+}) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: makeSlotId(processId, index),
+  });
+
+  if (!canEdit) {
+    return null;
+  }
+
+  return (
+    <TableRow
+      ref={setNodeRef}
+      className={cn(
+        'h-1 transition-all',
+        isOver && 'h-2 bg-blue-200'
+      )}
+    >
+      <TableCell colSpan={10} className="p-0 h-full">
+        {isOver && (
+          <div className="h-full w-full bg-blue-400 border-y-2 border-blue-600" />
+        )}
+      </TableCell>
+    </TableRow>
+  );
+}
 
 // 可拖动的工艺段行组件
 function SortableProcessRow({
@@ -115,7 +634,14 @@ function SortableProcessRow({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: process.id, disabled: !canEdit });
+  } = useSortable({
+    id: makeProcessId(process.id),
+    disabled: !canEdit,
+    data: {
+      type: 'process',
+      processId: process.id,
+    },
+  });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -345,6 +871,9 @@ export function RecipeTable() {
     insertProcess,
     duplicateProcess,
     reorderProcesses,
+    duplicateSubStep,
+    moveSubStep,
+    reorderSubSteps,
     hoveredNodeId,
     setHoveredNodeId,
     setEditingContext,
@@ -352,13 +881,23 @@ export function RecipeTable() {
   const { isEditable, mode } = useCollabStore();
   const canEdit = mode === 'demo' || isEditable();
 
-  // 拖动传感器
+  // 拖动传感器：添加距离阈值和延迟启动
   const sensors = useSensors(
-    useSensor(PointerSensor),
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 6, // 移动6px才开始拖拽
+        delay: 150, // 按住150ms才开始拖拽
+        tolerance: 5,
+      },
+    }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     })
   );
+
+  // 拖拽状态：用于 DragOverlay
+  const [activeSubStep, setActiveSubStep] = useState<SubStep | null>(null);
+  const [activeProcess, setActiveProcess] = useState<Process | null>(null);
 
   const [connectionModalProcessId, setConnectionModalProcessId] = useState<string | null>(null);
   const [paramsModalSubStepId, setParamsModalSubStepId] = useState<string | null>(null);
@@ -412,20 +951,71 @@ export function RecipeTable() {
     });
   };
 
-  const handleDragEnd = useCallback((event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || !canEdit) return;
+  const handleDragStart = useCallback((event: DragStartEvent) => {
+    const { active } = event;
+    const activeId = active.id as string;
 
-    if (active.id !== over.id) {
-      const oldIndex = processes.findIndex(p => p.id === active.id);
-      const newIndex = processes.findIndex(p => p.id === over.id);
-
-      if (oldIndex !== -1 && newIndex !== -1) {
-        const newOrder = arrayMove(processes, oldIndex, newIndex);
-        reorderProcesses(newOrder.map(p => p.id));
+    // 找到被拖拽的子步骤或工艺段
+    if (isSubStepId(activeId)) {
+      const subStepId = parseSubStepId(activeId);
+      if (subStepId) {
+        for (const process of processes) {
+          const subStep = process.node.subSteps.find(s => s.id === subStepId);
+          if (subStep) {
+            setActiveSubStep(subStep);
+            setActiveProcess(process);
+            break;
+          }
+        }
+      }
+    } else if (isProcessId(activeId)) {
+      const processId = parseProcessId(activeId);
+      if (processId) {
+        const process = processes.find(p => p.id === processId);
+        if (process) {
+          setActiveProcess(process);
+        }
       }
     }
-  }, [processes, canEdit, reorderProcesses]);
+  }, [processes]);
+
+  const handleDragOver = useCallback((_event: DragOverEvent) => {
+    // 可以在这里添加实时预览逻辑（如果需要）
+  }, []);
+
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    if (!canEdit) {
+      setActiveSubStep(null);
+      setActiveProcess(null);
+      return;
+    }
+
+    const intent = getSubStepDragIntent(event, processes);
+
+    switch (intent.type) {
+      case 'reorderProcess':
+        reorderProcesses(intent.processIds);
+        break;
+      case 'reorderSubSteps':
+        reorderSubSteps(intent.processId, intent.subStepIds);
+        break;
+      case 'moveSubStep':
+        moveSubStep(
+          intent.sourceProcessId,
+          intent.subStepId,
+          intent.targetProcessId,
+          intent.targetIndex
+        );
+        break;
+      case 'noop':
+        // 不做任何操作
+        break;
+    }
+
+    // 清理拖拽状态
+    setActiveSubStep(null);
+    setActiveProcess(null);
+  }, [processes, canEdit, reorderProcesses, reorderSubSteps, moveSubStep]);
 
   const handleAddProcess = () => {
     if (!canEdit) {
@@ -605,133 +1195,14 @@ export function RecipeTable() {
       });
   };
 
-  // 格式化条件值
-  const formatConditionValue = (value: { value: number; unit: string; condition?: string }) => {
-    if (!value) return '';
-    const condition = value.condition || '';
-    return `${condition}${value.value}${value.unit}`;
-  };
-
-  // 渲染子步骤参数显示 - Dynamic Component usage
-  const SubStepParamsCell = ({ subStep }: { subStep: SubStep }) => {
-    const { getConfigsByProcessType } = useFieldConfigStore();
-    const configs = getConfigsByProcessType(subStep.processType);
-
-    // 从嵌套参数结构中获取值的辅助函数 - 重复逻辑
-    // 理想情况下应该是辅助工具函数
-    const getParamValue = (key: string): any => {
-      const paramKeyMaps: Record<string, string> = {
-        [ProcessType.DISSOLUTION]: 'dissolutionParams',
-        [ProcessType.COMPOUNDING]: 'compoundingParams',
-        [ProcessType.FILTRATION]: 'filtrationParams',
-        [ProcessType.TRANSFER]: 'transferParams',
-        [ProcessType.FLAVOR_ADDITION]: 'flavorAdditionParams',
-        [ProcessType.EXTRACTION]: 'extractionParams',
-      };
-
-      if (subStep.processType === ProcessType.OTHER) {
-        if (key === 'params') return (subStep.params as any).params;
-        return null;
-      }
-
-      const groupKey = paramKeyMaps[subStep.processType];
-      if (!groupKey || !(subStep.params as any)[groupKey]) return null;
-      return (subStep.params as any)[groupKey][key];
-    };
-
-    const renderFieldValue = (config: FieldConfig, value: any) => {
-      if (value === undefined || value === null) return null;
-
-      let displayValue = '';
-
-      if (config.inputType === 'select' && config.options) {
-        const opt = config.options.find((o: any) => o.value === value);
-        displayValue = opt ? opt.label : value;
-      } else if (config.inputType === 'conditionValue') {
-        displayValue = formatConditionValue(value);
-      } else if (config.inputType === 'range' || config.inputType === 'waterRatio') {
-        if (value.min !== undefined && value.max !== undefined) {
-          displayValue = `${value.min}-${value.max}`;
-        } else if (value.max !== undefined) {
-          displayValue = `≤${value.max}`;
-        } else if (value.min !== undefined) {
-          displayValue = `≥${value.min}`;
-        }
-        if (config.unit) displayValue += config.unit;
-      } else if (config.inputType === 'object' && config.fields) {
-        // 处理对象类型: 使用 fields 元数据来格式化
-        const parts: string[] = [];
-
-        config.fields.forEach(fieldConfig => {
-          const fieldValue = value[fieldConfig.key];
-          if (fieldValue !== undefined && fieldValue !== null) {
-            // 根据字段语义添加前缀
-            if (fieldConfig.key === 'max') {
-              parts.push(`≤${fieldValue}`);
-            } else if (fieldConfig.key === 'min') {
-              parts.push(`≥${fieldValue}`);
-            } else if (fieldConfig.key === 'value') {
-              parts.push(String(fieldValue));
-            } else if (fieldConfig.key !== 'unit') {
-              // 跳过 unit 字段,它会被附加到末尾
-              parts.push(String(fieldValue));
-            }
-          }
-        });
-
-        // 查找 unit 字段
-        const unitField = config.fields.find(f => f.key === 'unit');
-        const unit = unitField ? value[unitField.key] : '';
-
-        displayValue = parts.join('') + unit;
-      } else if (config.inputType === 'array' && Array.isArray(value)) {
-        // 处理数组类型
-        if (value.length === 0) {
-          displayValue = '无';
-        } else if (config.itemFields) {
-          // 对象数组: 显示每个对象的主要字段
-          displayValue = value.map(item => {
-            // 优先显示 name 字段
-            return item.name || item.label || JSON.stringify(item);
-          }).join(', ');
-        } else {
-          // 简单数组
-          displayValue = value.join(', ');
-        }
-      } else if (config.inputType === 'number' || config.inputType === 'text') {
-        displayValue = String(value);
-        if (config.unit) displayValue += config.unit;
-      }
-      return displayValue;
-    };
-
-    if (subStep.processType === ProcessType.OTHER) {
-      return <span className="text-xs text-left break-words">{getParamValue('params')}</span>;
-    }
-
-    return (
-      <div className="flex flex-col gap-1 text-xs text-left">
-        {configs.slice(0, 3).map(config => { // Limit to 3 fields for table view
-          const val = getParamValue(config.key);
-          if (val === undefined || val === null) return null;
-          const displayValue = renderFieldValue(config, val);
-          return (
-            <span key={config.key} className="truncate block" title={`${config.label}: ${displayValue}`}>
-              <span className="text-slate-500 mr-1">{config.label}:</span>
-              {displayValue}
-            </span>
-          );
-        })}
-      </div>
-    );
-  };
-
   return (
     <div className="flex h-full flex-col">
       <div className="flex-1 overflow-auto relative">
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}
+          onDragStart={handleDragStart}
+          onDragOver={handleDragOver}
           onDragEnd={handleDragEnd}
         >
           <Table className="table-fixed w-full min-w-[800px]" wrapperClassName="overflow-visible">
@@ -750,8 +1221,9 @@ export function RecipeTable() {
               </TableRow>
             </TableHeader>
             <TableBody>
+              {/* 工艺段排序上下文 */}
               <SortableContext
-                items={processes.map(p => p.id)}
+                items={processes.map(p => makeProcessId(p.id))}
                 strategy={verticalListSortingStrategy}
               >
                 {processes.map((process, index) => {
@@ -783,245 +1255,82 @@ export function RecipeTable() {
                       />
 
                       {/* Process内的子步骤 */}
-                      {isExpanded && process.node.subSteps.map((subStep) => {
-                        const isEditingLabel = editingSubStep?.id === subStep.id && editingSubStep?.field === 'label';
-                        const isEditingDeviceCode = editingSubStep?.id === subStep.id && editingSubStep?.field === 'deviceCode';
-                        const isEditingIngredients = editingSubStep?.id === subStep.id && editingSubStep?.field === 'ingredients';
-                        const isHovered = hoveredNodeId === subStep.id;
-
-                        return (
-                          <TableRow
-                            key={subStep.id}
-                            id={`row-${subStep.id}`}
-                            className={isHovered ? 'bg-blue-50' : ''}
-                            onMouseEnter={() => setHoveredNodeId(subStep.id)}
-                            onMouseLeave={() => setHoveredNodeId(null)}
+                      {isExpanded && (
+                        <>
+                          {/* 顶部插入槽位 */}
+                          <InsertSlotRow processId={process.id} index={0} canEdit={canEdit} />
+                          
+                          {/* 子步骤排序上下文（每个工艺段独立） */}
+                          <SortableContext
+                            items={process.node.subSteps.map(s => makeSubStepId(s.id))}
+                            strategy={verticalListSortingStrategy}
                           >
-                            <TableCell>
-                              <span className="text-xs text-gray-400">↑</span>
-                            </TableCell>
-                            <TableCell>
-                              <span className="font-mono text-sm">{subStep.order}</span>
-                            </TableCell>
-                            <TableCell>
-                              {isEditingLabel ? (
-                                <Input
-                                  value={editSubStepValues.label ?? subStep.label}
-                                  onChange={(e) =>
-                                    setEditSubStepValues({ ...editSubStepValues, label: e.target.value })
-                                  }
-                                  onBlur={() => handleSaveEditSubStep(process.id, subStep.id)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') handleSaveEditSubStep(process.id, subStep.id);
-                                    if (e.key === 'Escape') handleCancelEdit();
-                                  }}
-                                  autoFocus
-                                  disabled={!canEdit}
-                                />
-                              ) : (
-                                <span
-                                  className={cn(
-                                    canEdit ? 'cursor-pointer hover:text-blue-600' : 'cursor-not-allowed opacity-60',
-                                    'min-w-[80px] inline-block',
-                                    !subStep.label && canEdit && 'border border-dashed border-gray-300 px-2 py-1 rounded text-gray-400'
-                                  )}
-                                  onClick={() => canEdit && handleStartEditSubStep(subStep, 'label')}
-                                >
-                                  {subStep.label || '未命名'}
-                                  {!canEdit && <Lock className="ml-1 inline h-3 w-3" />}
-                                </span>
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              <span className="text-xs text-gray-600">
-                                {getProcessTypeLabel(subStep.processType)}
-                              </span>
-                            </TableCell>
-                            <TableCell>
-                              {isEditingDeviceCode ? (
-                                <Input
-                                  value={editSubStepValues.deviceCode ?? subStep.deviceCode}
-                                  onChange={(e) =>
-                                    setEditSubStepValues({
-                                      ...editSubStepValues,
-                                      deviceCode: e.target.value,
-                                    })
-                                  }
-                                  onBlur={() => handleSaveEditSubStep(process.id, subStep.id)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') handleSaveEditSubStep(process.id, subStep.id);
-                                    if (e.key === 'Escape') handleCancelEdit();
-                                  }}
-                                  autoFocus
-                                  disabled={!canEdit}
-                                />
-                              ) : (
-                                <span
-                                  className={`${canEdit ? 'cursor-pointer hover:text-blue-600' : 'cursor-not-allowed opacity-60'}`}
-                                  onClick={() => canEdit && handleStartEditSubStep(subStep, 'deviceCode')}
-                                >
-                                  {getEquipmentConfig(subStep)?.deviceCode || subStep.deviceCode}
-                                </span>
-                              )}
-                            </TableCell>
-                            <TableCell className="max-w-[150px] overflow-hidden">
-                              {isEditingIngredients ? (
-                                <textarea
-                                  value={editSubStepValues.ingredients ?? subStep.ingredients}
-                                  onChange={(e) =>
-                                    setEditSubStepValues({
-                                      ...editSubStepValues,
-                                      ingredients: e.target.value,
-                                    })
-                                  }
-                                  onBlur={() => handleSaveEditSubStep(process.id, subStep.id)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Escape') handleCancelEdit();
-                                  }}
-                                  autoFocus
-                                  rows={3}
-                                  className="w-full text-xs px-2 py-1 border border-gray-300 rounded resize-none focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                  disabled={!canEdit}
-                                />
-                              ) : (
-                                (() => {
-                                  const materials = getMaterials(subStep);
-                                  const hasContent = materials.length > 0 || (subStep.ingredients && subStep.ingredients.trim() !== '');
-                                  const displayText = materials.length > 0
-                                    ? materials.map(m => m.name).join('、')
-                                    : subStep.ingredients;
+                            {process.node.subSteps.map((subStep, subIndex) => {
+                              const isEditingLabel = editingSubStep?.id === subStep.id && editingSubStep?.field === 'label';
+                              const isEditingDeviceCode = editingSubStep?.id === subStep.id && editingSubStep?.field === 'deviceCode';
+                              const isEditingIngredients = editingSubStep?.id === subStep.id && editingSubStep?.field === 'ingredients';
+                              const isHovered = hoveredNodeId === subStep.id;
 
-                                  return (
-                                    <span
-                                      className={cn(
-                                        'text-xs',
-                                        canEdit ? 'cursor-pointer hover:text-blue-600' : 'cursor-not-allowed opacity-60',
-                                        'min-w-[60px] inline-block',
-                                        !hasContent && canEdit && 'border border-dashed border-gray-300 px-2 py-1 rounded text-gray-400'
-                                      )}
-                                      onClick={() => canEdit && handleStartEditSubStep(subStep, 'ingredients')}
-                                    >
-                                      {hasContent ? displayText : '点击添加'}
-                                    </span>
-                                  );
-                                })()
-                              )}
-                            </TableCell>
-                            <TableCell className="max-w-[200px]">
-                              <div className="overflow-hidden">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => {
-                                    if (!canEdit) {
-                                      alert('需要编辑权限或进入演示模式');
-                                      return;
-                                    }
-                                    setParamsModalSubStepId(subStep.id);
-                                  }}
-                                  className="w-full h-auto py-2 px-3 text-left min-h-[2rem]"
-                                  disabled={!canEdit}
-                                  title={!canEdit ? '需要编辑权限' : '点击编辑参数'}
-                                >
-                                  <div className="flex items-start w-full overflow-hidden">
-                                    <Edit2 className="mr-2 h-3 w-3 mt-1 shrink-0 opacity-50" />
-                                    <div className="flex-1 min-w-0">
-                                      <SubStepParamsCell subStep={subStep} />
-                                    </div>
-                                  </div>
-                                </Button>
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              {(() => {
-                                const isEditingDuration = editingSubStep?.id === subStep.id && editingSubStep?.field === 'estimatedDuration';
-                                const durationValue = subStep.estimatedDuration?.value ?? 0;
-
-                                if (isEditingDuration) {
-                                  return (
-                                    <Input
-                                      type="number"
-                                      min="0"
-                                      step="0.1"
-                                      value={editSubStepValues.estimatedDuration?.value ?? durationValue}
-                                      onChange={(e) => {
-                                        const value = parseFloat(e.target.value) || 0;
-                                        setEditSubStepValues({
-                                          ...editSubStepValues,
-                                          estimatedDuration: {
-                                            value,
-                                            unit: 'min'
-                                          }
-                                        });
-                                      }}
-                                      onBlur={() => handleSaveEditSubStep(process.id, subStep.id)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter') handleSaveEditSubStep(process.id, subStep.id);
-                                        if (e.key === 'Escape') handleCancelEdit();
-                                      }}
-                                      autoFocus
-                                      disabled={!canEdit}
-                                      className="w-20 text-xs"
-                                    />
-                                  );
-                                }
-
-                                return (
-                                  <span
-                                    className={cn(
-                                      'text-xs text-gray-600',
-                                      canEdit ? 'cursor-pointer hover:text-blue-600' : 'cursor-not-allowed opacity-60',
-                                      !subStep.estimatedDuration && canEdit && 'border border-dashed border-gray-300 px-2 py-1 rounded text-gray-400'
-                                    )}
-                                    onClick={() => canEdit && handleStartEditSubStep(subStep, 'estimatedDuration')}
-                                  >
-                                    {subStep.estimatedDuration
-                                      ? `${subStep.estimatedDuration.value}${subStep.estimatedDuration.unit}`
-                                      : canEdit ? '点击添加' : '-'}
-                                  </span>
-                                );
-                              })()}
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex flex-col space-y-1">
-                                {subStep.deviceRequirement && (
-                                  <span className="text-xs bg-purple-50 text-purple-700 px-1 py-0.5 rounded border border-purple-100 truncate max-w-[100px]" title="设备需求">
-                                    {subStep.deviceRequirement.deviceCode || subStep.deviceRequirement.deviceType || '设备需求'}
-                                  </span>
-                                )}
-                                {subStep.canParallelWith && subStep.canParallelWith.length > 0 && (
-                                  <span className="text-xs bg-green-50 text-green-700 px-1 py-0.5 rounded border border-green-100" title="可并行">
-                                    并行:{subStep.canParallelWith.length}
-                                  </span>
-                                )}
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => {
-                                  if (!canEdit) {
-                                    alert('需要编辑权限或进入演示模式');
-                                    return;
-                                  }
-                                  removeSubStep(process.id, subStep.id);
-                                }}
-                                disabled={!canEdit}
-                                title={!canEdit ? '需要编辑权限或进入演示模式' : '删除'}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
+                              return (
+                                <React.Fragment key={subStep.id}>
+                                  {/* 子步骤前的插入槽位 */}
+                                  <InsertSlotRow processId={process.id} index={subIndex + 1} canEdit={canEdit} />
+                                  
+                                  <SortableSubStepRow
+                                    subStep={subStep}
+                                    process={process}
+                                    isEditingLabel={isEditingLabel}
+                                    isEditingDeviceCode={isEditingDeviceCode}
+                                    isEditingIngredients={isEditingIngredients}
+                                    isHovered={isHovered}
+                                    editingSubStep={editingSubStep}
+                                    editSubStepValues={editSubStepValues}
+                                    setEditSubStepValues={setEditSubStepValues}
+                                    handleStartEditSubStep={handleStartEditSubStep}
+                                    handleSaveEditSubStep={handleSaveEditSubStep}
+                                    handleCancelEdit={handleCancelEdit}
+                                    canEdit={canEdit}
+                                    setParamsModalSubStepId={setParamsModalSubStepId}
+                                    removeSubStep={removeSubStep}
+                                    duplicateSubStep={duplicateSubStep}
+                                    setHoveredNodeId={setHoveredNodeId}
+                                  />
+                                </React.Fragment>
+                              );
+                            })}
+                          </SortableContext>
+                          
+                          {/* 末尾插入槽位 */}
+                          <InsertSlotRow processId={process.id} index={-1} canEdit={canEdit} />
+                        </>
+                      )}
                     </React.Fragment>
                   );
                 })}
               </SortableContext>
             </TableBody>
           </Table>
+
+          {/* 拖拽浮层 */}
+          <DragOverlay>
+            {activeSubStep && activeProcess ? (
+              <div className="bg-white border-2 border-blue-500 rounded shadow-lg opacity-90 min-w-[800px]">
+                <div className="bg-blue-50 py-2 px-4 flex items-center gap-2">
+                  <span className="font-mono text-sm w-[60px]">{activeSubStep.order}</span>
+                  <span className="font-medium min-w-[80px]">{activeSubStep.label || '未命名'}</span>
+                  <span className="text-xs text-gray-500">
+                    ({activeProcess.name})
+                  </span>
+                </div>
+              </div>
+            ) : activeProcess ? (
+              <div className="bg-white border-2 border-blue-500 rounded shadow-lg opacity-90 min-w-[800px]">
+                <div className="bg-slate-100 py-2 px-4">
+                  <span className="font-bold">{activeProcess.name}</span>
+                </div>
+              </div>
+            ) : null}
+          </DragOverlay>
         </DndContext>
       </div>
 

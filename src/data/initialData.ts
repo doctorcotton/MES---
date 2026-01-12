@@ -349,13 +349,17 @@ export const initialProcesses: Process[] = [
         {
           id: "P7-substep-1",
           order: 1,
-          processType: ProcessType.OTHER,
+          processType: ProcessType.UHT,
           label: "UHT灭菌",
           deviceCode: "UHT机",
           ingredients: "-",
           params: {
-            processType: ProcessType.OTHER,
-            params: "（112±2）℃，30s，冷却至30℃以下"
+            processType: ProcessType.UHT,
+            uhtParams: {
+              sterilizationTemp: { value: 112, tolerance: 2, unit: '℃' },
+              sterilizationTime: { value: 30, unit: 's' },
+              coolingTempMax: 30
+            }
           }
         }
       ]
@@ -375,13 +379,15 @@ export const initialProcesses: Process[] = [
         {
           id: "P8-substep-1",
           order: 1,
-          processType: ProcessType.OTHER,
+          processType: ProcessType.FILLING,
           label: "灌装",
           deviceCode: "灌装机",
           ingredients: "-",
           params: {
-            processType: ProcessType.OTHER,
-            params: "无菌灌装"
+            processType: ProcessType.FILLING,
+            fillingParams: {
+              fillingMethod: '无菌灌装'
+            }
           }
         }
       ]
@@ -415,25 +421,29 @@ export const initialProcesses: Process[] = [
         {
           id: "PostProcessing-substep-2",
           order: 2,
-          processType: ProcessType.OTHER,
+          processType: ProcessType.MAGNETIC_ABSORPTION,
           label: "磁棒吸附",
           deviceCode: "管道",
           ingredients: "-",
           params: {
-            processType: ProcessType.OTHER,
-            params: "除杂"
+            processType: ProcessType.MAGNETIC_ABSORPTION,
+            magneticAbsorptionParams: {
+              purpose: '除杂'
+            }
           }
         },
         {
           id: "PostProcessing-substep-3",
           order: 3,
-          processType: ProcessType.OTHER,
+          processType: ProcessType.ASEPTIC_TANK,
           label: "无菌罐",
           deviceCode: "无菌罐",
           ingredients: "-",
           params: {
-            processType: ProcessType.OTHER,
-            params: "暂存"
+            processType: ProcessType.ASEPTIC_TANK,
+            asepticTankParams: {
+              container: '无菌罐'
+            }
           }
         }
       ]

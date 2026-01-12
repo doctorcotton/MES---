@@ -90,7 +90,7 @@ const PROCESS_TYPE_FIELDS: Record<string, any[]> = {
         },
         { key: 'extraction_tempMaxLimit', label: '温度上限', inputType: 'number', unit: '℃', defaultValue: 87, validation: { max: 87 } },
         {
-            key: 'extraction_teaWaterRatio', label: '茶水比', inputType: 'waterRatio', unit: '(1:X)', 
+            key: 'extraction_teaWaterRatio', label: '茶水比', inputType: 'waterRatio', unit: '(1:X)',
             defaultValue: { min: 50, max: 50 }
         },
         {
@@ -105,10 +105,12 @@ const PROCESS_TYPE_FIELDS: Record<string, any[]> = {
             key: 'extraction_extractTime', label: '萃取时长', inputType: 'object',
             fields: [
                 { id: uuidv4(), key: 'value', label: '时长', inputType: 'number', validation: { required: true } },
-                { id: uuidv4(), key: 'unit', label: '单位', inputType: 'select', options: [
-                    { value: 'min', label: '分钟' },
-                    { value: 's', label: '秒' }
-                ], validation: { required: true } }
+                {
+                    id: uuidv4(), key: 'unit', label: '单位', inputType: 'select', options: [
+                        { value: 'min', label: '分钟' },
+                        { value: 's', label: '秒' }
+                    ], validation: { required: true }
+                }
             ]
         },
         { key: 'extraction_stirProgram', label: '搅拌程序', inputType: 'text' },
@@ -229,6 +231,22 @@ const PROCESS_TYPE_FIELDS: Record<string, any[]> = {
             ], defaultValue: '是'
         },
         { key: 'membrane_flushNote', label: '赶水说明', inputType: 'text' },
+    ],
+    'uht': [
+        { key: 'uht_sterilizationTemp', label: '灭菌温度', inputType: 'number', unit: '℃', defaultValue: 112, validation: { required: true } },
+        { key: 'uht_sterilizationTempTolerance', label: '温度容差', inputType: 'number', unit: '±℃', defaultValue: 2 },
+        { key: 'uht_sterilizationTime', label: '灭菌时间', inputType: 'number', unit: 's', defaultValue: 30, validation: { required: true } },
+        { key: 'uht_coolingTempMax', label: '冷却后最高温度', inputType: 'number', unit: '℃', defaultValue: 30 },
+    ],
+    'filling': [
+        { key: 'filling_fillingMethod', label: '灌装方式', inputType: 'text', defaultValue: '无菌灌装', validation: { required: true } },
+    ],
+    'magneticAbsorption': [
+        { key: 'magnetic_purpose', label: '处理目的', inputType: 'text', defaultValue: '除杂' },
+    ],
+    'asepticTank': [
+        { key: 'aseptic_holdingTime', label: '暂存时间', inputType: 'number', unit: 'min' },
+        { key: 'aseptic_container', label: '容器名称', inputType: 'text', defaultValue: '无菌罐' },
     ],
 };
 

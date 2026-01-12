@@ -122,6 +122,22 @@ export const PROCESS_TYPE_FIELDS: Partial<Record<ProcessType, SubStepFieldConfig
         { key: 'coolingTemp', label: '冷却温度', inputType: 'number', unit: '℃' },
         { key: 'settlingTime', label: '静置时间', inputType: 'number', unit: 'min' },
     ],
+    [ProcessType.UHT]: [
+        { key: 'uht_sterilizationTemp', label: '灭菌温度', inputType: 'number', unit: '℃', required: true, defaultValue: 112 },
+        { key: 'uht_sterilizationTempTolerance', label: '温度容差', inputType: 'number', unit: '±℃', defaultValue: 2 },
+        { key: 'uht_sterilizationTime', label: '灭菌时间', inputType: 'number', unit: 's', required: true, defaultValue: 30 },
+        { key: 'uht_coolingTempMax', label: '冷却后最高温度', inputType: 'number', unit: '℃', defaultValue: 30 },
+    ],
+    [ProcessType.FILLING]: [
+        { key: 'filling_fillingMethod', label: '灌装方式', inputType: 'text', required: true, defaultValue: '无菌灌装' },
+    ],
+    [ProcessType.MAGNETIC_ABSORPTION]: [
+        { key: 'magnetic_purpose', label: '处理目的', inputType: 'text', defaultValue: '除杂' },
+    ],
+    [ProcessType.ASEPTIC_TANK]: [
+        { key: 'aseptic_holdingTime', label: '暂存时间', inputType: 'number', unit: 'min' },
+        { key: 'aseptic_container', label: '容器名称', inputType: 'text', defaultValue: '无菌罐' },
+    ],
 };
 
 // ============ 默认子步骤模板 ============
@@ -321,6 +337,68 @@ export const DEFAULT_MEMBRANE_FILTRATION_TEMPLATE: SubStepTemplate = {
     description: '膜过滤处理',
 };
 
+export const DEFAULT_UHT_TEMPLATE: SubStepTemplate = {
+    type: ProcessType.UHT,
+    version: 1,
+    label: 'UHT灭菌',
+    defaultDeviceCode: 'UHT机',
+    defaultDeviceType: DeviceType.UHT_MACHINE,
+    defaultParams: {
+        processType: ProcessType.UHT,
+        uhtParams: {
+            sterilizationTemp: { value: 112, tolerance: 2, unit: '℃' },
+            sterilizationTime: { value: 30, unit: 's' },
+            coolingTempMax: 30,
+        },
+    },
+    description: '超高温瞬时灭菌',
+};
+
+export const DEFAULT_FILLING_TEMPLATE: SubStepTemplate = {
+    type: ProcessType.FILLING,
+    version: 1,
+    label: '灌装',
+    defaultDeviceCode: '灌装机',
+    defaultDeviceType: DeviceType.OTHER,
+    defaultParams: {
+        processType: ProcessType.FILLING,
+        fillingParams: {
+            fillingMethod: '无菌灌装',
+        },
+    },
+    description: '无菌灌装工艺',
+};
+
+export const DEFAULT_MAGNETIC_ABSORPTION_TEMPLATE: SubStepTemplate = {
+    type: ProcessType.MAGNETIC_ABSORPTION,
+    version: 1,
+    label: '磁棒吸附',
+    defaultDeviceCode: '管道',
+    defaultDeviceType: DeviceType.OTHER,
+    defaultParams: {
+        processType: ProcessType.MAGNETIC_ABSORPTION,
+        magneticAbsorptionParams: {
+            purpose: '除杂',
+        },
+    },
+    description: '磁棒吸附除杂',
+};
+
+export const DEFAULT_ASEPTIC_TANK_TEMPLATE: SubStepTemplate = {
+    type: ProcessType.ASEPTIC_TANK,
+    version: 1,
+    label: '无菌罐',
+    defaultDeviceCode: '无菌罐',
+    defaultDeviceType: DeviceType.ASEPTIC_TANK,
+    defaultParams: {
+        processType: ProcessType.ASEPTIC_TANK,
+        asepticTankParams: {
+            container: '无菌罐',
+        },
+    },
+    description: '无菌暂存',
+};
+
 /**
  * 默认子步骤模板集合
  */
@@ -336,6 +414,10 @@ export const DEFAULT_SUBSTEP_TEMPLATES: Partial<Record<ProcessType, SubStepTempl
     [ProcessType.COOLING]: DEFAULT_COOLING_TEMPLATE,
     [ProcessType.HOLDING]: DEFAULT_HOLDING_TEMPLATE,
     [ProcessType.MEMBRANE_FILTRATION]: DEFAULT_MEMBRANE_FILTRATION_TEMPLATE,
+    [ProcessType.UHT]: DEFAULT_UHT_TEMPLATE,
+    [ProcessType.FILLING]: DEFAULT_FILLING_TEMPLATE,
+    [ProcessType.MAGNETIC_ABSORPTION]: DEFAULT_MAGNETIC_ABSORPTION_TEMPLATE,
+    [ProcessType.ASEPTIC_TANK]: DEFAULT_ASEPTIC_TANK_TEMPLATE,
 };
 
 /**
@@ -389,13 +471,17 @@ export function getProcessTypeName(type: ProcessType): string {
         [ProcessType.COOLING]: '冷却',
         [ProcessType.HOLDING]: '暂存',
         [ProcessType.MEMBRANE_FILTRATION]: '膜过滤',
+        [ProcessType.UHT]: 'UHT灭菌',
+        [ProcessType.FILLING]: '灌装',
+        [ProcessType.MAGNETIC_ABSORPTION]: '磁棒吸附',
+        [ProcessType.ASEPTIC_TANK]: '无菌罐',
     };
-    
+
     // 如果存在默认名称，直接返回
     if (defaultNames[type]) {
         return defaultNames[type]!;
     }
-    
+
     // 尝试从 store 中获取自定义名称（需要动态导入以避免循环依赖）
     try {
         const { useProcessTypeConfigStore } = require('../store/useProcessTypeConfigStore');
@@ -406,7 +492,7 @@ export function getProcessTypeName(type: ProcessType): string {
     } catch (error) {
         // Store 可能还未初始化，忽略错误
     }
-    
+
     // 如果都没有，返回类型值本身
     return type;
 }
