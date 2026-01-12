@@ -21,10 +21,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useRecipeStore } from '@/store/useRecipeStore';
 import { ProcessType, getEquipmentConfig, getMaterials } from '@/types/recipe';
 import { MaterialSpec } from '@/types/material';
-
-
 import { useFieldConfigStore } from '@/store/useFieldConfigStore';
 import { DynamicFormRenderer } from '@/components/common/DynamicForm/DynamicFormRenderer';
+import { CompoundingFeedStepsEditor } from './compounding/CompoundingFeedStepsEditor';
+import {
+  normalizeCompoundingFeedSteps,
+  deriveAdditivesFromFeedSteps,
+} from '@/utils/compounding';
 
 interface ParamsModalProps {
   nodeId: string;
@@ -59,6 +62,7 @@ export function ParamsModal({ nodeId, open, onOpenChange }: ParamsModalProps) {
   const [formData, setFormData] = useState<any>({});
   const [currentConfigs, setCurrentConfigs] = useState<any[]>([]);
   const [configLoadError, setConfigLoadError] = useState<string | null>(null);
+  const [feedSteps, setFeedSteps] = useState<any[]>([]);
 
   useEffect(() => {
     fetchConfigs();
@@ -120,7 +124,13 @@ export function ParamsModal({ nodeId, open, onOpenChange }: ParamsModalProps) {
       ...schedulingData,
       ...formParams
     });
-  }, [subStep, process, open, configs]); // Added configs dependency
+
+    // 如果是调配类型，初始化 feedSteps
+    if (subStep.processType === ProcessType.COMPOUNDING) {
+      const normalizedSteps = normalizeCompoundingFeedSteps(subStep, processes);
+      setFeedSteps(normalizedSteps);
+    }
+  }, [subStep, process, open, configs, processes]); // Added configs dependency
 
   const handleSave = () => {
     if (!subStep || !process) return;
@@ -130,11 +140,26 @@ export function ParamsModal({ nodeId, open, onOpenChange }: ParamsModalProps) {
     // Reconstruct nested params from flat formData
     const newParams: any = {};
 
-    currentConfigs.forEach(config => {
-      if (formData[config.key] !== undefined) {
-        newParams[config.key] = formData[config.key];
-      }
-    });
+    // 如果是调配类型，特殊处理 feedSteps
+    if (subStep.processType === ProcessType.COMPOUNDING) {
+      // 保存 feedSteps
+      newParams.feedSteps = feedSteps;
+      // 从 feedSteps 派生 additives（用于兼容）
+      newParams.additives = deriveAdditivesFromFeedSteps(feedSteps);
+      // 保留其他字段（如 finalTemp, stirringSpeed 等）
+      const existingParams = (subStep.params as any)?.compoundingParams || {};
+      if (existingParams.finalTemp) newParams.finalTemp = existingParams.finalTemp;
+      if (existingParams.stirringSpeed) newParams.stirringSpeed = existingParams.stirringSpeed;
+      if (existingParams.stirringTime) newParams.stirringTime = existingParams.stirringTime;
+      if (existingParams.compounding_stirringTime) newParams.compounding_stirringTime = existingParams.compounding_stirringTime;
+    } else {
+      // 其他类型：使用原有逻辑
+      currentConfigs.forEach(config => {
+        if (formData[config.key] !== undefined) {
+          newParams[config.key] = formData[config.key];
+        }
+      });
+    }
 
     let updateData: any = {};
 
@@ -167,7 +192,7 @@ export function ParamsModal({ nodeId, open, onOpenChange }: ParamsModalProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+      <DialogContent className={subStep?.processType === ProcessType.COMPOUNDING ? "sm:max-w-[900px] max-h-[90vh] overflow-y-auto" : "sm:max-w-[600px] max-h-[90vh] overflow-y-auto"}>
         <DialogHeader>
           <DialogTitle>编辑关键参数 - {subStep?.id}</DialogTitle>
           <DialogDescription>
@@ -175,84 +200,115 @@ export function ParamsModal({ nodeId, open, onOpenChange }: ParamsModalProps) {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="py-4 h-full overflow-hidden flex flex-col">
+        <div className={`py-4 h-full flex flex-col ${subStep?.processType === ProcessType.COMPOUNDING ? 'overflow-y-auto overflow-x-visible' : 'overflow-hidden'}`}>
           <Tabs defaultValue="params" className="w-full h-full flex flex-col">
             <TabsList className="grid w-full grid-cols-2">
               <TabsTrigger value="params">工艺参数</TabsTrigger>
               <TabsTrigger value="scheduling">调度设置</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="params" className="flex-1 overflow-auto p-1">
-              <div className="space-y-4">
-                {/* 加载状态 */}
-                {isLoading && (
-                  <div className="flex items-center justify-center p-8 text-gray-500">
-                    <div className="text-center">
-                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
-                      <p>加载字段配置中...</p>
-                    </div>
-                  </div>
-                )}
-
-                {/* 错误提示 */}
-                {(error || configLoadError) && !isLoading && (
-                  <div className="bg-red-50 border border-red-200 rounded-md p-4 text-red-800">
-                    <div className="flex items-start">
-                      <svg className="w-5 h-5 mr-2 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                      </svg>
-                      <div className="flex-1">
-                        <h4 className="font-medium mb-1">字段配置加载失败</h4>
-                        <p className="text-sm">{error || configLoadError}</p>
-                        <p className="text-sm mt-2">建议：</p>
-                        <ul className="text-sm list-disc list-inside mt-1">
-                          <li>检查后端服务是否正常运行</li>
-                          <li>刷新页面重新加载配置</li>
-                          <li>如问题持续，请联系管理员检查数据库</li>
-                        </ul>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Dynamic Form Renderer */}
-                {!isLoading && !error && !configLoadError && (
-                  <DynamicFormRenderer
-                    configs={currentConfigs}
-                    data={formData}
-                    onChange={(updated) => setFormData((prev: any) => ({ ...prev, ...updated }))}
+            <TabsContent value="params" className={`flex-1 p-1 ${subStep?.processType === ProcessType.COMPOUNDING ? 'overflow-y-auto overflow-x-visible' : 'overflow-auto'}`}>
+              {subStep?.processType === ProcessType.COMPOUNDING ? (
+                // 调配类型：使用专用编排器
+                <div className="h-full flex flex-col">
+                  <CompoundingFeedStepsEditor
+                    feedSteps={feedSteps}
+                    currentProcessId={process?.id || ''}
+                    onChange={setFeedSteps}
                   />
-                )}
-
-                <div className="border-t pt-4 mt-4">
-                  <h4 className="text-sm font-medium mb-4">V2 数据 (核心结构)</h4>
-                  <div className="grid grid-cols-2 gap-4">
+                  {/* 保留全局参数编辑（如最终温度） */}
+                  <div className="border-t pt-4 mt-4">
+                    <h4 className="text-sm font-medium mb-4">全局参数</h4>
                     <div className="space-y-2">
-                      <Label>设备编号</Label>
+                      <Label>最终温度上限 (℃)</Label>
                       <Input
-                        value={formData.equipmentV2?.deviceCode || ''}
-                        onChange={(e) => setFormData({
-                          ...formData,
-                          equipmentV2: { ...formData.equipmentV2, deviceCode: e.target.value }
-                        })}
+                        type="number"
+                        value={(formData.finalTemp?.max as number) || ''}
+                        onChange={(e) => {
+                          const max = e.target.value ? parseFloat(e.target.value) : undefined;
+                          setFormData({
+                            ...formData,
+                            finalTemp: { max, unit: '℃' },
+                          });
+                        }}
+                        placeholder="如：30"
                       />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>物料数量</Label>
-                      <Input
-                        value={formData.materialsV2?.length || 0}
-                        disabled
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-2 mt-2">
-                    <Label>物料清单 (预览)</Label>
-                    <div className="text-xs text-gray-500 border p-2 rounded bg-gray-50">
-                      {formData.materialsV2?.map((m: MaterialSpec) => m.name).join(', ') || '无'}
                     </div>
                   </div>
                 </div>
-              </div>
+              ) : (
+                // 其他类型：使用动态表单
+                <div className="space-y-4">
+                  {/* 加载状态 */}
+                  {isLoading && (
+                    <div className="flex items-center justify-center p-8 text-gray-500">
+                      <div className="text-center">
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
+                        <p>加载字段配置中...</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 错误提示 */}
+                  {(error || configLoadError) && !isLoading && (
+                    <div className="bg-red-50 border border-red-200 rounded-md p-4 text-red-800">
+                      <div className="flex items-start">
+                        <svg className="w-5 h-5 mr-2 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                        </svg>
+                        <div className="flex-1">
+                          <h4 className="font-medium mb-1">字段配置加载失败</h4>
+                          <p className="text-sm">{error || configLoadError}</p>
+                          <p className="text-sm mt-2">建议：</p>
+                          <ul className="text-sm list-disc list-inside mt-1">
+                            <li>检查后端服务是否正常运行</li>
+                            <li>刷新页面重新加载配置</li>
+                            <li>如问题持续，请联系管理员检查数据库</li>
+                          </ul>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Dynamic Form Renderer */}
+                  {!isLoading && !error && !configLoadError && (
+                    <DynamicFormRenderer
+                      configs={currentConfigs}
+                      data={formData}
+                      onChange={(updated) => setFormData((prev: any) => ({ ...prev, ...updated }))}
+                    />
+                  )}
+
+                  <div className="border-t pt-4 mt-4">
+                    <h4 className="text-sm font-medium mb-4">V2 数据 (核心结构)</h4>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>设备编号</Label>
+                        <Input
+                          value={formData.equipmentV2?.deviceCode || ''}
+                          onChange={(e) => setFormData({
+                            ...formData,
+                            equipmentV2: { ...formData.equipmentV2, deviceCode: e.target.value }
+                          })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>物料数量</Label>
+                        <Input
+                          value={formData.materialsV2?.length || 0}
+                          disabled
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-2 mt-2">
+                      <Label>物料清单 (预览)</Label>
+                      <div className="text-xs text-gray-500 border p-2 rounded bg-gray-50">
+                        {formData.materialsV2?.map((m: MaterialSpec) => m.name).join(', ') || '无'}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </TabsContent>
 
             <TabsContent value="scheduling" className="flex-1 overflow-auto p-1">

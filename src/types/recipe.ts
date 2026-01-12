@@ -137,13 +137,68 @@ export interface DissolutionParams {
 }
 
 /**
+ * 进料顺序步骤类型：加水
+ */
+export interface CompoundingFeedStepWater {
+  kind: 'water';
+  waterName?: string;  // 水名称，如 'RO水'
+  amount: {
+    mode: 'L' | 'percent';  // 升数或百分比
+    value?: number;        // 单值（升数或百分比）
+    min?: number;          // 最小值（百分比区间）
+    max?: number;          // 最大值（百分比区间）
+  };
+}
+
+/**
+ * 进料顺序步骤类型：引用前序工艺段（全量）
+ */
+export interface CompoundingFeedStepFromProcess {
+  kind: 'fromProcess';
+  sourceProcessId: string;  // 来源工艺段ID，如 'P1'
+  name?: string;            // 显示名称（可选，用于描述）
+}
+
+/**
+ * 进料顺序步骤类型：搅拌
+ */
+export interface CompoundingFeedStepStir {
+  kind: 'stir';
+  durationMin?: number;     // 搅拌时长（分钟）
+  speed?: {
+    value?: number;         // 速度值
+    unit?: 'percent' | 'rpm';  // 单位：百分比或转速
+  };
+}
+
+/**
+ * 进料顺序步骤类型：手动步骤
+ */
+export interface CompoundingFeedStepManual {
+  kind: 'manual';
+  title: string;            // 步骤标题，如 '调整理化，定容'、'加香精'
+  note?: string;           // 备注说明
+}
+
+/**
+ * 进料顺序步骤联合类型
+ */
+export type CompoundingFeedStep =
+  | CompoundingFeedStepWater
+  | CompoundingFeedStepFromProcess
+  | CompoundingFeedStepStir
+  | CompoundingFeedStepManual;
+
+/**
  * 调配参数接口
  */
 export interface CompoundingParams {
-  additives: CompoundingAdditive[];  // 添加物列表（有序）
-  stirringSpeed: ConditionValue;     // 搅拌速度
-  stirringTime: { value: number; unit: 'min' }; // 搅拌时间
-  finalTemp: { max: number; unit: '℃' };       // 最终温度
+  additives?: CompoundingAdditive[];  // 添加物列表（有序，兼容旧数据，可由 feedSteps 派生）
+  feedSteps?: CompoundingFeedStep[];  // 进料顺序步骤（新结构，支持搅拌等操作）
+  stirringSpeed?: ConditionValue;     // 搅拌速度（全局，可选）
+  stirringTime?: { value: number; unit: 'min' }; // 搅拌时间（全局，可选）
+  compounding_stirringTime?: { value: number; unit: 'min' }; // 兼容旧字段名
+  finalTemp?: { max: number; unit: '℃' };       // 最终温度
 }
 
 /**

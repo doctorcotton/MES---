@@ -317,6 +317,65 @@ export const initialProcesses: Process[] = [
           params: {
             processType: ProcessType.COMPOUNDING,
             compoundingParams: {
+              // 新的 feedSteps 结构（支持搅拌等操作）
+              feedSteps: [
+                {
+                  kind: 'water',
+                  waterName: 'RO水',
+                  amount: { mode: 'percent', min: 10, max: 20 }
+                },
+                {
+                  kind: 'fromProcess',
+                  sourceProcessId: 'P1',
+                  name: '赤藓糖醇、三氯蔗糖溶解液'
+                },
+                {
+                  kind: 'fromProcess',
+                  sourceProcessId: 'P2',
+                  name: '三氯蔗糖、酸类、维生素类、提取物等的溶解液'
+                },
+                {
+                  kind: 'fromProcess',
+                  sourceProcessId: 'P3',
+                  name: '麦芽糊精溶液'
+                },
+                {
+                  kind: 'stir',
+                  durationMin: 3,
+                  speed: { value: 90, unit: 'percent' }
+                },
+                {
+                  kind: 'fromProcess',
+                  sourceProcessId: 'P4',
+                  name: '色素溶液'
+                },
+                {
+                  kind: 'fromProcess',
+                  sourceProcessId: 'P5',
+                  name: '香精'
+                },
+                {
+                  kind: 'manual',
+                  title: '调整理化',
+                  note: '调整理化指标'
+                },
+                {
+                  kind: 'water',
+                  waterName: 'RO水',
+                  amount: { mode: 'percent', value: 100 } // 定容到100%
+                },
+                {
+                  kind: 'stir',
+                  durationMin: 10,
+                  speed: { value: 90, unit: 'percent' }
+                },
+                {
+                  kind: 'manual',
+                  title: '确认理化和风味',
+                  note: '最终确认'
+                }
+              ],
+              // 保留旧的 additives（用于兼容显示）
               additives: [
                 { order: 1, type: 'rawMaterial', name: 'RO水', amount: '10%-20%' },
                 { order: 2, type: 'solution', source: 'P1', name: '赤藓糖醇、三氯蔗糖溶解液' },
