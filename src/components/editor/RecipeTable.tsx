@@ -50,10 +50,10 @@ import { ConnectionModal } from './ConnectionModal';
 import { ParamsModal } from './ParamsModal';
 import { AddSubStepDialog } from './AddSubStepDialog';
 import { Plus, Trash2, Lock, ChevronDown, ChevronRight, Edit2, Copy, ArrowUp, ArrowDown } from 'lucide-react';
-import { 
-  getSubStepDragIntent, 
-  makeProcessId, 
-  makeSubStepId, 
+import {
+  getSubStepDragIntent,
+  makeProcessId,
+  makeSubStepId,
   makeSlotId,
   parseProcessId,
   parseSubStepId,
@@ -175,8 +175,15 @@ const SubStepParamsCell = ({ subStep }: { subStep: SubStep }) => {
         displayValue = value.join(', ');
       }
     } else if (config.inputType === 'number' || config.inputType === 'text') {
-      displayValue = String(value);
-      if (config.unit) displayValue += config.unit;
+      // 处理可能是 {value, unit} 结构的情况（与 CustomNode.tsx 保持一致）
+      if (typeof value === 'object' && value !== null && 'value' in value) {
+        displayValue = String(value.value);
+        if (value.unit) displayValue += value.unit;
+        else if (config.unit) displayValue += config.unit;
+      } else {
+        displayValue = String(value);
+        if (config.unit) displayValue += config.unit;
+      }
     }
     return displayValue;
   };
@@ -1259,7 +1266,7 @@ export function RecipeTable() {
                         <>
                           {/* 顶部插入槽位 */}
                           <InsertSlotRow processId={process.id} index={0} canEdit={canEdit} />
-                          
+
                           {/* 子步骤排序上下文（每个工艺段独立） */}
                           <SortableContext
                             items={process.node.subSteps.map(s => makeSubStepId(s.id))}
@@ -1275,7 +1282,7 @@ export function RecipeTable() {
                                 <React.Fragment key={subStep.id}>
                                   {/* 子步骤前的插入槽位 */}
                                   <InsertSlotRow processId={process.id} index={subIndex + 1} canEdit={canEdit} />
-                                  
+
                                   <SortableSubStepRow
                                     subStep={subStep}
                                     process={process}
@@ -1299,7 +1306,7 @@ export function RecipeTable() {
                               );
                             })}
                           </SortableContext>
-                          
+
                           {/* 末尾插入槽位 */}
                           <InsertSlotRow processId={process.id} index={-1} canEdit={canEdit} />
                         </>

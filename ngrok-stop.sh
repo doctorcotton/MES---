@@ -56,6 +56,13 @@ main() {
         # 获取 ngrok URL 用于 webhook
         ngrok_url="${NGROK_URL:-stopped}"
         
+        # 优先停止监听器（防止它在停止过程中重启 ngrok）
+        if [ -n "$MONITOR_PID" ] && kill -0 $MONITOR_PID 2>/dev/null; then
+            log_info "停止监听器 (PID: $MONITOR_PID)..."
+            kill $MONITOR_PID 2>/dev/null || true
+            sleep 1
+        fi
+        
         # 停止 ngrok
         if [ -n "$NGROK_PID" ] && kill -0 $NGROK_PID 2>/dev/null; then
             log_info "停止 ngrok (PID: $NGROK_PID)..."
@@ -81,6 +88,9 @@ main() {
     fi
     
     # 额外清理：通过进程名查找并停止
+    # 停止监听器（通过进程名查找 monitor_ngrok 函数）
+    pkill -f "monitor_ngrok" 2>/dev/null || true
+    
     # 停止 ngrok
     pkill -f "ngrok http" 2>/dev/null || true
     
