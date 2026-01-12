@@ -135,6 +135,12 @@ export function FeedStepDetail({
   }
 
   if (step.kind === 'fromProcess') {
+    // 计算可选择的工艺段数量（包括当前已选中的）
+    const selectableProcesses = availableProcesses.filter(
+      p => p.id === step.sourceProcessId || !usedProcessIds.includes(p.id)
+    );
+    const hasNoSelectable = availableProcesses.length === 0 || selectableProcesses.length === 0;
+
     return (
       <div className="space-y-4">
         <div className="space-y-2">
@@ -166,6 +172,11 @@ export function FeedStepDetail({
               })}
             </SelectContent>
           </Select>
+          {hasNoSelectable && (
+            <div className="text-xs text-amber-600 bg-amber-50 p-2 rounded border border-amber-200">
+              没有可引用的前序工艺段。请先删除已有的"引用前序工艺段"步骤后再添加新的。
+            </div>
+          )}
         </div>
         <div className="space-y-2">
           <Label>显示名称（可选）</Label>

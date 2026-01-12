@@ -39,13 +39,17 @@
 | 功能模块 | 实现状态 | 说明 |
 |---------|---------|------|
 | **工艺段识别** | ✅ 已实现 | `segmentIdentifier.ts` - 使用 DFS 算法识别并行/串行段 |
-| **并行段布局** | ✅ 已实现 | `layoutParallelSegments` - 固定连线长度 120px |
+| **并行段布局** | ✅ 已实现 | `layoutParallelSegments` - 按工艺类型分组对齐 |
+| **萃取类自适应压缩** | ✅ 已实现 | `calculateExtractionEdgeLength` - 节点越多间距越小 |
 | **串行段布局** | ✅ 已实现 | `layoutSerialSegments` - 从汇聚点向下排列 |
 | **汇聚点Y坐标计算** | ✅ 已实现 | `calculateConvergenceY` - 支持 max/weighted/median 策略 |
-| **汇聚点X坐标居中** | ✅ 已实现 | 加权质心算法，基于子树规模 |
+| **汇聚点X坐标居中** | ✅ 已实现 | 加权质心算法，基于子树规模的**平方根** |
+| **布局吸附机制** | ✅ 已实现 | 汇聚点自动吸附到入边源节点X坐标 |
+| **圆角可行性检查** | ✅ 已实现 | 确保连线有足够水平空间画圆角 |
 | **基于 displayOrder 的水平布局** | ✅ 已实现 | 每个 Process 分配一个水平车道 |
 | **分档宽度计算** | ✅ 已实现 | `CustomNode.tsx` 中的 `getTieredWidth` 函数 |
 | **节点尺寸获取** | ✅ 已实现 | 使用 React Flow 自动测量的 `node.width` 和 `node.height` |
+| **测量重试机制** | ✅ 已实现 | 最多重试5次，避免使用未测量的尺寸 |
 | **调试模式** | ✅ 已实现 | `DebugOverlay.tsx` 和 `DebugStatsPanel.tsx` |
 
 ---
@@ -361,7 +365,11 @@ interface ProcessSegment {
 
 #### 2.1 并行段布局
 
-**目标**：所有并行段起点Y坐标相同，段内连线长度固定。
+**目标**：实现智能的并行段布局，具备以下特性：
+
+- **按工艺类型分组对齐**：同类型段的起点Y坐标相同
+- **组间Y偏移**：短类型整体下移，让各组末端更接近
+- **萃取类自适应压缩**：子步骤越多，段内间距越小
 
 ```typescript
 export function layoutParallelSegments(
@@ -370,43 +378,138 @@ export function layoutParallelSegments(
   config: ParallelLayoutConfig
 ): Record<string, number> {
   const nodeYPositions: Record<string, number> = {};
+
+  // 步骤1: 按工艺类型分组
+  const segmentsByType = new Map<ProcessType | 'unknown', ProcessSegment[]>();
+  segments.forEach(segment => {
+    const segmentType = getSegmentType(segment);
+    if (!segmentsByType.has(segmentType)) {
+      segmentsByType.set(segmentType, []);
+    }
+    segmentsByType.get(segmentType)!.push(segment);
+  });
+
+  // 步骤2: 计算每个段的相对布局和边距
+  interface SegmentLayoutInfo {
+    segment: ProcessSegment;
+    segmentType: ProcessType | 'unknown';
+    edgeLength: number;
+    relativePositions: Record<string, number>;
+    lastNodeBottom: number;
+  }
+
+  const segmentLayouts: SegmentLayoutInfo[] = [];
   
   segments.forEach(segment => {
-    let currentY = config.initialY; // 所有段从同一Y开始
+    const segmentType = getSegmentType(segment);
+    const nodeCount = segment.nodes.length;
     
-    segment.nodes.forEach((node, idx) => {
-      nodeYPositions[node.id] = currentY;
-      
-      if (idx < segment.nodes.length - 1) {
-        const nextNode = segment.nodes[idx + 1];
-        const currentNodeHeight = nodeHeights[node.id] || 120;
-        const nextNodeHeight = nodeHeights[nextNode.id] || 120;
-        
-        // 计算间距：节点高度的一半 + 目标连线长度 + 下个节点高度的一半
-        const spacing =
-          currentNodeHeight / 2 +      // 当前节点底部到中心
-          config.targetEdgeLength +    // 连线长度（固定120px）
-          nextNodeHeight / 2;          // 下个节点中心到顶部
-        
-        currentY += spacing;
-      }
+    // 计算边距：萃取类使用自适应公式，其他类型使用固定值
+    let edgeLength: number;
+    if (segmentType === ProcessTypes.EXTRACTION) {
+      edgeLength = calculateExtractionEdgeLength(nodeCount, config.targetEdgeLength);
+    } else {
+      edgeLength = config.targetEdgeLength;
+    }
+    
+    // 计算相对布局（假设 startY=0）
+    const { relativePositions, lastNodeBottom } = calculateRelativeLayout(
+      segment,
+      nodeHeights,
+      edgeLength
+    );
+    
+    segmentLayouts.push({ segment, segmentType, edgeLength, relativePositions, lastNodeBottom });
+  });
+
+  // 步骤3: 计算每个类型组的 span（组内最大 lastNodeBottom）
+  const groupSpans = new Map<ProcessType | 'unknown', number>();
+  segmentsByType.forEach((typeSegments, type) => {
+    const maxSpan = Math.max(
+      ...typeSegments.map(seg => {
+        const layout = segmentLayouts.find(l => l.segment.id === seg.id);
+        return layout ? layout.lastNodeBottom : 0;
+      })
+    );
+    groupSpans.set(type, maxSpan);
+  });
+
+  // 步骤4: 计算全局最大 span
+  const globalMaxSpan = Math.max(...Array.from(groupSpans.values()));
+
+  // 步骤5: 确定每组 startY（组内头部对齐，组间偏移让末端接近）
+  const groupStartYs = new Map<ProcessType | 'unknown', number>();
+  const baseStartY = config.initialY;
+  
+  segmentsByType.forEach((_typeSegments, type) => {
+    const groupSpan = groupSpans.get(type) || 0;
+    // 短组下移：groupStartY = baseStartY + (globalMaxSpan - groupSpan)
+    const groupStartY = baseStartY + (globalMaxSpan - groupSpan);
+    groupStartYs.set(type, groupStartY);
+  });
+
+  // 步骤6: 应用偏移，写入最终位置
+  segmentLayouts.forEach(({ segment, segmentType, relativePositions }) => {
+    const groupStartY = groupStartYs.get(segmentType) || baseStartY;
+    
+    segment.nodes.forEach(node => {
+      const relativeY = relativePositions[node.id];
+      nodeYPositions[node.id] = groupStartY + relativeY;
     });
   });
-  
+
   return nodeYPositions;
 }
 ```
 
+#### 2.1.1 萃取类自适应边距计算
+
+萃取类工艺段通常包含较多子步骤，使用自适应公式压缩间距：
+
+```typescript
+/**
+ * 计算萃取段的自适应边距长度
+ * 
+ * 公式: edgeLen(n) = clamp(base * s * sqrt(3 / max(n, 3)), minEdge, base)
+ * 
+ * @param nodeCount 段内节点数量
+ * @param base 基础边距（默认 120）
+ * @param scale 缩放因子（默认 0.96，让 n=4 时约等于 100）
+ * @param minEdge 最小边距（默认 70，防止太挤）
+ * @returns 计算后的边距长度
+ */
+function calculateExtractionEdgeLength(
+  nodeCount: number,
+  base: number = 120,
+  scale: number = 0.96,
+  minEdge: number = 70
+): number {
+  const effectiveN = Math.max(nodeCount, 3);
+  const rawEdge = base * scale * Math.sqrt(3 / effectiveN);
+  return Math.max(minEdge, Math.min(rawEdge, base));
+}
+```
+
+**边距计算示例**：
+
+| 节点数 | 计算边距 | 说明 |
+|-------|---------|------|
+| 1-3 | 120px | 使用默认边距 |
+| 4 | ~100px | 开始压缩 |
+| 6 | ~85px | 中等压缩 |
+| 9+ | 70px | 最小边距 |
+
 **布局示意图**：
 
 ```
-并行段1:  [Node1] ──120px── [Node2] ──120px── [Node3]
-         ↑
-         起始Y = 80
+溶解类段1:  [Node1] ──120px── [Node2]
+           ↑ startY = 80 + offset
 
-并行段2:  [Node4] ──120px── [Node5]
-         ↑
-         起始Y = 80 (与段1对齐)
+溶解类段2:  [Node3] ──120px── [Node4] ──120px── [Node5]
+           ↑ startY = 80 + offset (与段1对齐)
+
+萃取类段1:  [Node6] ──85px── [Node7] ──85px── [Node8] ──85px── [Node9]
+           ↑ startY = 80 (更多节点，更小间距)
 ```
 
 #### 2.2 汇聚点Y坐标计算
@@ -609,7 +712,7 @@ displayOrders.forEach((displayOrder, laneIndex) => {
 
 **实现位置**：`src/components/graph/LayoutController.tsx`
 
-采用**加权质心算法**，基于子树规模加权：
+采用**加权质心算法**，基于子树规模的**平方根**加权（弱化长分支的影响，避免汇聚点过度偏向）：
 
 ```typescript
 // 计算汇聚点 X 坐标 (加权质心法)
@@ -627,8 +730,8 @@ if (parallelSegments.length > 0) {
       sum + nodePositions[n.id].x, 0
     ) / validNodes.length;
 
-    // 权重 = 节点数量 (子树规模)
-    const weight = validNodes.length;
+    // 权重 = 节点数量的平方根 (弱化长分支的影响)
+    const weight = Math.sqrt(validNodes.length);
 
     weightedXSum += segmentCentroidX * weight;
     totalWeight += weight;
@@ -638,6 +741,85 @@ if (parallelSegments.length > 0) {
     convergenceX = weightedXSum / totalWeight;
   }
 }
+```
+
+#### 4.3 布局吸附机制 ✅ 已实现
+
+当汇聚点与某入边源节点 X 坐标接近时，自动吸附对齐，同时确保圆角几何可行：
+
+```typescript
+// 布局吸附参数
+const SNAP_THRESHOLD_SCREEN_PX = 24; // 屏幕像素阈值
+const CORNER_RADIUS = 20;            // 圆角半径（与 SequenceEdge.tsx 保持一致）
+const MIN_HORIZONTAL_DISTANCE = CORNER_RADIUS * 2; // 圆角可行性的最小水平距离
+
+// 收集所有进入汇聚点的并行分支末节点X坐标
+const incomingXs: number[] = [];
+parallelSegments.forEach(segment => {
+  if (segment.nodes.length > 0) {
+    const lastNode = segment.nodes[segment.nodes.length - 1];
+    const lastNodeX = nodePositions[lastNode.id]?.x;
+    if (lastNodeX !== undefined) {
+      incomingXs.push(lastNodeX);
+    }
+  }
+});
+
+if (incomingXs.length > 0) {
+  // 获取当前缩放级别，将屏幕像素阈值转换为画布单位
+  const viewport = getViewport();
+  const zoom = viewport.zoom || 1;
+  const snapThresholdWorld = SNAP_THRESHOLD_SCREEN_PX / zoom;
+
+  // 找到与 convergenceX 最近的入边源节点X
+  const xNearest = incomingXs.reduce((best, x) =>
+    Math.abs(x - convergenceX) < Math.abs(best - convergenceX) ? x : best
+  , incomingXs[0]);
+
+  const distanceToNearest = Math.abs(convergenceX - xNearest);
+  
+  if (distanceToNearest < snapThresholdWorld) {
+    // 在阈值内：考虑吸附
+    if (distanceToNearest < MIN_HORIZONTAL_DISTANCE) {
+      // 距离不足以画圆角，调整到满足最小距离的位置
+      convergenceX = convergenceX > xNearest 
+        ? xNearest + MIN_HORIZONTAL_DISTANCE 
+        : xNearest - MIN_HORIZONTAL_DISTANCE;
+    } else {
+      // 距离足够，安全吸附
+      convergenceX = xNearest;
+    }
+  } else {
+    // 超过阈值：检查是否满足圆角可行性
+    const problematicEdges = incomingXs.filter(x => 
+      Math.abs(x - convergenceX) < MIN_HORIZONTAL_DISTANCE
+    );
+    
+    if (problematicEdges.length > 0) {
+      // 调整 convergenceX 以满足最小距离要求
+      const problematicX = problematicEdges.reduce((worst, x) => 
+        Math.abs(x - convergenceX) < Math.abs(worst - convergenceX) ? x : worst
+      , problematicEdges[0]);
+      
+      convergenceX = convergenceX > problematicX
+        ? problematicX + MIN_HORIZONTAL_DISTANCE
+        : problematicX - MIN_HORIZONTAL_DISTANCE;
+    }
+  }
+}
+```
+
+**吸附机制示意图**：
+
+```
+吸附前:                          吸附后:
+  [Node1]    [Node2]               [Node1]    [Node2]
+     |          |                     |          |
+     ↓          ↓                     ↓          ↓
+  ──○────────○──                   ──────○───────
+       ↓                                 ↓
+  [Convergence]                    [Convergence]
+  (X偏离理想位置)                    (X吸附到Node2的X)
 ```
 
 **串行段对齐**：串行段的节点 X 坐标与汇聚点对齐：
@@ -1221,12 +1403,64 @@ nodes.forEach(node => {
 });
 ```
 
+### 测量重试机制 ✅ 已实现
+
+当所有节点尺寸都未测量时（可能是 React Flow 临时清空），系统会延迟重试而不是使用默认尺寸：
+
+```typescript
+const MAX_MEASUREMENT_RETRIES = 5; // 最多重试 5 次
+
+// 如果所有节点都未测量，延迟重试
+if (measuredNodes.length === 0 && nodes.length > 0) {
+  if (measurementRetryRef.current < MAX_MEASUREMENT_RETRIES) {
+    console.warn(`[LayoutController] 所有节点尺寸未测量，延迟重试 (${measurementRetryRef.current + 1}/${MAX_MEASUREMENT_RETRIES})`);
+    measurementRetryRef.current++;
+    
+    // 延迟 2-3 帧后重试
+    measurementRetryTimeoutRef.current = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        measurementRetryTimeoutRef.current = null;
+        // 通过递增 relayoutTrigger 触发重试
+        setRelayoutTrigger(prev => prev + 1);
+      });
+    });
+    return; // 不继续布局，等待重试
+  } else {
+    console.warn('[LayoutController] 达到最大测量重试次数，使用默认尺寸继续布局');
+    measurementRetryRef.current = 0;
+  }
+}
+```
+
+**重试机制流程**：
+
+```mermaid
+flowchart TD
+    A[开始布局] --> B{所有节点已测量?}
+    B -->|是| C[继续布局计算]
+    B -->|否| D{重试次数 < 5?}
+    D -->|是| E[等待 2-3 帧]
+    E --> F[递增重试计数]
+    F --> G[触发重新布局]
+    G --> A
+    D -->|否| H[使用默认尺寸]
+    H --> C
+```
+
+**参数说明**：
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| `MAX_MEASUREMENT_RETRIES` | 5 | 最大重试次数 |
+| 重试间隔 | 2-3 帧 | 使用 `requestAnimationFrame` 嵌套 |
+
 ### 优势
 
 - ✅ **真实尺寸**：使用实际渲染尺寸，无需估算
 - ✅ **自动适应**：自动适应内容变化（展开/折叠、动态内容）
 - ✅ **无需维护**：不需要手动计算文字换行和高度
 - ✅ **容错机制**：未测量时使用默认值，保证布局不中断
+- ✅ **智能重试**：避免在 React Flow 临时清空尺寸时使用错误数据
 
 ### 与 Canvas API 的对比
 
@@ -2082,13 +2316,16 @@ const debugLabels = useMemo((): DebugLabel[] => {
 ### 已实现功能 ✅
 
 1. **工艺段识别**：完整实现，使用 DFS 算法识别并行和串行工艺段
-2. **并行段布局**：完整实现，固定连线长度 120px
+2. **并行段布局**：完整实现，按工艺类型分组对齐，萃取类自适应压缩
 3. **串行段布局**：完整实现，从汇聚点向下排列
-4. **汇聚点计算**：完整实现，支持 Y 坐标（max/weighted/median 策略）和 X 坐标（加权质心）
-5. **水平布局**：完整实现，基于 `displayOrder` 分配水平车道
-6. **分档宽度**：完整实现，在 `CustomNode.tsx` 中根据输入数量计算
-7. **节点尺寸获取**：完整实现，使用 React Flow 自动测量
-8. **调试模式**：完整实现，包括可视化叠加层和统计面板
+4. **汇聚点计算**：完整实现，支持 Y 坐标（max/weighted/median 策略）和 X 坐标（加权质心，平方根权重）
+5. **布局吸附机制**：完整实现，汇聚点自动吸附到入边源节点X坐标
+6. **圆角可行性检查**：完整实现，确保连线有足够水平空间画圆角
+7. **水平布局**：完整实现，基于 `displayOrder` 分配水平车道
+8. **分档宽度**：完整实现，在 `CustomNode.tsx` 中根据输入数量计算
+9. **节点尺寸获取**：完整实现，使用 React Flow 自动测量
+10. **测量重试机制**：完整实现，最多重试5次
+11. **调试模式**：完整实现，包括可视化叠加层和统计面板
 
 ### 实现差异说明
 
@@ -2111,16 +2348,27 @@ const debugLabels = useMemo((): DebugLabel[] => {
 
 ## 更新日志
 
-### 2024-XX-XX：文档更新
+### 2026-01-12：文档全面更新
 
 **更新内容**:
-- ✅ 更新文档以反映实际实现
-- ✅ 修正文件路径和代码示例
-- ✅ 更新坐标系统说明
-- ✅ 添加实现状态总览表
+- ✅ 更新并行段布局算法描述，添加按工艺类型分组对齐策略
+- ✅ 添加萃取类自适应边距压缩公式：`edgeLen(n) = clamp(base * s * sqrt(3 / max(n, 3)), minEdge, base)`
+- ✅ 修正汇聚点X坐标权重公式为 `Math.sqrt(validNodes.length)`
+- ✅ 添加布局吸附机制描述（吸附阈值、圆角可行性检查）
+- ✅ 添加测量重试机制描述（最多5次重试）
+- ✅ 更新实现状态总览表
 
 **主要变更**:
-- 布局入口从 `useAutoLayout.ts` 更正为 `LayoutController.tsx`
-- 节点尺寸计算从 Canvas API 更正为 React Flow 自动测量
+- 并行段布局从"固定连线长度"更正为"按工艺类型分组对齐"
+- 汇聚点X坐标权重从"节点数量"更正为"节点数量的平方根"
+- 新增布局吸附机制章节（4.3节）
+- 新增测量重试机制章节
 
+### 2024-XX-XX：文档初始化
+
+**更新内容**:
+- ✅ 创建文档，描述自动布局算法的基本架构
+- ✅ 添加工艺段识别算法详解
+- ✅ 添加分段布局计算器描述
+- ✅ 添加调试模式说明
 

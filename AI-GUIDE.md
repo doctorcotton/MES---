@@ -4,6 +4,19 @@
 
 ## 📌 重要更新（2026-01）
 
+### 新增工艺类型（2026-01-09）
+- ✅ **UHT 杀菌** (`UHT`) - 超高温瞬时杀菌
+- ✅ **灌装** (`FILLING`) - 无菌灌装
+- ✅ **磁棒吸附** (`MAGNETIC_ABSORPTION`) - 除杂处理
+- ✅ **无菌罐** (`ASEPTIC_TANK`) - 暂存
+- 📖 **参数定义**：参考 `src/types/recipe.ts` 和 `src/types/processTypeConfig.ts`
+
+### 调配（Compounding）子组件（2026-01-09）
+- ✅ **进料顺序编辑器**：`CompoundingFeedStepsEditor.tsx` - 管理进料步骤序列
+- ✅ **进料步骤详情**：`FeedStepDetail.tsx` - 编辑单个进料步骤参数
+- ✅ **进料步骤列表**：`FeedStepList.tsx` - 显示和排序进料步骤
+- 📍 **路径**：`src/components/editor/compounding/`
+
 ### 布局算法架构重构
 - ✅ **新架构**：从 Dagre 库迁移到自研的**工艺段识别 + 分段布局**算法
 - ✅ **核心文件**：
@@ -36,6 +49,10 @@
 | 添加子步骤 | `src/components/editor/AddSubStepDialog.tsx` | `AddSubStepDialog` 组件 |
 | 参数配置 | `src/components/editor/ParamsModal.tsx` | `ParamsModal` 组件 |
 | 粘贴选项 | `src/components/editor/PasteOptionsDialog.tsx` | `PasteOptionsDialog` 组件 |
+| **调配子组件** | | |
+| 进料顺序编辑 | `src/components/editor/compounding/CompoundingFeedStepsEditor.tsx` | 管理进料步骤序列 |
+| 进料步骤详情 | `src/components/editor/compounding/FeedStepDetail.tsx` | 编辑单个进料步骤 |
+| 进料步骤列表 | `src/components/editor/compounding/FeedStepList.tsx` | 显示和排序进料步骤 |
 | **流程图组件** | | |
 | 图视图 | `src/components/graph/RecipeFlow.tsx` | `RecipeFlow` 组件 |
 | 自定义节点 | `src/components/graph/CustomNode.tsx` | `CustomNode` 组件 |
@@ -53,9 +70,11 @@
 | **配置组件** | | |
 | 配置页面 | `src/components/config/ConfigPage.tsx` | `ConfigPage` 组件 - 工艺类型配置 |
 | 字段配置 | `src/components/config/FieldConfigEditor.tsx` | `FieldConfigEditor` - 动态字段定义编辑器 |
+| 嵌套字段编辑 | `src/components/config/NestedFieldEditor.tsx` | `NestedFieldEditor` - 嵌套字段配置 |
+| 选项编辑器 | `src/components/config/SelectOptionsEditor.tsx` | `SelectOptionsEditor` - 下拉选项编辑 |
 | **动态表单** | | |
 | 表单渲染器 | `src/components/common/DynamicForm/DynamicFormRenderer.tsx` | `DynamicFormRenderer` - 基于配置生成表单 |
-| 字段组件 | `src/components/common/DynamicForm/fields/` | 各类字段组件 (`ArrayField`, `ObjectField` 等) |
+| 字段组件 | `src/components/common/DynamicForm/fields/` | `ArrayField`, `ObjectField`, `ConditionValueField`, `WaterRatioField` 等 |
 | **调度组件** | | |
 | 甘特图视图 | `src/components/scheduling/GanttView.tsx` | `GanttView` 组件 - 设备调度甘特图 |
 | 设备状态面板 | `src/components/scheduling/DeviceStatusPanel.tsx` | `DeviceStatusPanel` 组件 |
@@ -96,6 +115,11 @@
 | 字段提取器 | `src/utils/fieldExtractor.ts` | 从配方数据中提取字段定义 |
 | 字段验证器 | `src/utils/fieldValidator.ts` | 字段验证逻辑 |
 | 字段同步工具 | `src/utils/syncFieldsFromRecipes.ts` | 从配方同步字段到数据库 |
+| 字段创建工具 | `src/utils/createFieldsForProcessType.ts` | 根据工艺类型创建字段配置 |
+| 调配工具 | `src/utils/compounding.ts` | 调配相关工具函数 |
+| 配方验证器 | `src/utils/recipeValidator.ts` | 配方数据校验（连接验证等） |
+| 子步骤操作 | `src/utils/subStepOps.ts` | 子步骤增删改操作 |
+| DnD ID 工具 | `src/utils/dndIds.ts` | 拖拽相关 ID 管理 |
 | **后端** | | |
 | 服务器入口 | `server/src/index.ts` | Express + Socket.IO 服务器 |
 | 数据库 | `server/src/db.ts` | SQLite 数据库操作 |
@@ -230,12 +254,21 @@ graph LR
 ```
 
 ### ProcessNodeData（工艺节点数据）
-可辨识联合类型，包含 6 种工艺类型：
+可辨识联合类型，包含 15 种工艺类型：
 - `DISSOLUTION`（溶解）- `dissolutionParams`
 - `COMPOUNDING`（调配）- `compoundingParams`
 - `FILTRATION`（过滤）- `filtrationParams`
 - `TRANSFER`（赶料）- `transferParams`
 - `FLAVOR_ADDITION`（香精添加）- `flavorAdditionParams`
+- `EXTRACTION`（萃取）- `extractionParams`
+- `CENTRIFUGE`（离心）- `centrifugeParams`
+- `COOLING`（冷却）- `coolingParams`
+- `HOLDING`（暂存）- `holdingParams`
+- `MEMBRANE_FILTRATION`（膜过滤）- `membraneFilterParams`
+- `UHT`（UHT 杀菌）- `uhtParams`
+- `FILLING`（灌装）- `fillingParams`
+- `MAGNETIC_ABSORPTION`（磁棒吸附）- `magneticAbsorptionParams`
+- `ASEPTIC_TANK`（无菌罐）- `asepticTankParams`
 - `OTHER`（其他）- `params: string`
 
 ### RecipeEdge（连线）

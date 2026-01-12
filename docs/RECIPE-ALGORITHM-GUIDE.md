@@ -94,31 +94,141 @@ interface SubStep {
 }
 ```
 
-#### ProcessType（工艺类型枚举）
+#### ProcessType（工艺类型）
+
+工艺类型采用可扩展的字符串类型，支持运行时动态扩展。基础类型作为常量保留：
 
 ```typescript
-enum ProcessType {
-  DISSOLUTION = 'dissolution',        // 溶解
-  COMPOUNDING = 'compounding',       // 调配
-  FILTRATION = 'filtration',         // 过滤
-  TRANSFER = 'transfer',             // 赶料
-  FLAVOR_ADDITION = 'flavorAddition', // 香精添加
-  OTHER = 'other'                    // 其他
-}
+// 类型定义
+export type ProcessType = string;
+
+// 基础工艺类型常量
+export const ProcessTypes = {
+  DISSOLUTION: 'dissolution',        // 溶解
+  COMPOUNDING: 'compounding',       // 调配
+  FILTRATION: 'filtration',         // 过滤
+  TRANSFER: 'transfer',             // 赶料
+  FLAVOR_ADDITION: 'flavorAddition', // 香精添加
+  OTHER: 'other',                    // 其他
+  EXTRACTION: 'extraction',          // 萃取
+  CENTRIFUGE: 'centrifuge',          // 离心
+  COOLING: 'cooling',                // 冷却
+  HOLDING: 'holding',                // 暂存
+  MEMBRANE_FILTRATION: 'membraneFiltration', // 膜过滤
+  UHT: 'uht',                        // UHT灭菌
+  FILLING: 'filling',               // 灌装
+  MAGNETIC_ABSORPTION: 'magneticAbsorption', // 磁棒吸附
+  ASEPTIC_TANK: 'asepticTank',       // 无菌罐
+} as const;
 ```
 
 #### ProcessNodeData（工艺参数联合类型）
 
-根据不同的工艺类型，参数结构不同：
+根据不同的工艺类型，参数结构不同。采用可辨识联合类型，支持动态扩展：
 
 ```typescript
 type ProcessNodeData =
-  | ({ processType: ProcessType.DISSOLUTION } & { dissolutionParams: DissolutionParams })
-  | ({ processType: ProcessType.COMPOUNDING } & { compoundingParams: CompoundingParams })
-  | ({ processType: ProcessType.FILTRATION } & { filtrationParams: FiltrationParams })
-  | ({ processType: ProcessType.TRANSFER } & { transferParams: TransferParams })
-  | ({ processType: ProcessType.FLAVOR_ADDITION } & { flavorAdditionParams: FlavorAdditionParams })
-  | ({ processType: ProcessType.OTHER } & { params: string });
+  | ({ processType: typeof ProcessTypes.DISSOLUTION } & { dissolutionParams: DissolutionParams })
+  | ({ processType: typeof ProcessTypes.COMPOUNDING } & { compoundingParams: CompoundingParams })
+  | ({ processType: typeof ProcessTypes.FILTRATION } & { filtrationParams: FiltrationParams })
+  | ({ processType: typeof ProcessTypes.TRANSFER } & { transferParams: TransferParams })
+  | ({ processType: typeof ProcessTypes.FLAVOR_ADDITION } & { flavorAdditionParams: FlavorAdditionParams })
+  | ({ processType: typeof ProcessTypes.EXTRACTION } & { extractionParams: ExtractionParams })
+  | ({ processType: typeof ProcessTypes.CENTRIFUGE } & { centrifugeParams: CentrifugeParams })
+  | ({ processType: typeof ProcessTypes.COOLING } & { coolingParams: CoolingParams })
+  | ({ processType: typeof ProcessTypes.HOLDING } & { holdingParams: HoldingParams })
+  | ({ processType: typeof ProcessTypes.MEMBRANE_FILTRATION } & { membraneFiltrationParams: MembraneFiltrationParams })
+  | ({ processType: typeof ProcessTypes.UHT } & { uhtParams: UhtParams })
+  | ({ processType: typeof ProcessTypes.FILLING } & { fillingParams: FillingParams })
+  | ({ processType: typeof ProcessTypes.MAGNETIC_ABSORPTION } & { magneticAbsorptionParams: MagneticAbsorptionParams })
+  | ({ processType: typeof ProcessTypes.ASEPTIC_TANK } & { asepticTankParams: AsepticTankParams })
+  | ({ processType: typeof ProcessTypes.OTHER } & { params: string })
+  | ({ processType: string } & { [key: string]: any }); // 支持动态扩展类型
+```
+
+#### 新增工艺参数接口
+
+以下是新增工艺类型的参数接口定义：
+
+```typescript
+// 萃取参数
+interface ExtractionParams {
+  extractWaterVolume?: ConditionValue;   // 萃取水量（L）
+  waterTempRange?: TemperatureRange;     // 水温范围（℃）
+  tempMaxLimit?: number;                  // 温度上限（℃）
+  teaWaterRatio?: WaterRatio;            // 茶水比（1:X）
+  teaBlend?: TeaBlendItem[];             // 茶叶配比数组
+  extractTime?: { value: number; unit: 'min' | 's' };  // 萃取时长
+  stirProgram?: string;                  // 搅拌程序描述
+  referenceRpm?: number;                 // 参考转速（r/min）
+  pourTimeLimitSec?: number;             // 倾倒时间限制（秒）
+  openExtraction?: '是' | '否';          // 敞口提取
+  stirDuringFeeding?: '是' | '否';       // 投料期间开启搅拌
+  exhaustFanOff?: '是' | '否';          // 投料/萃取/倾倒关闭排气扇
+}
+
+// 离心参数
+interface CentrifugeParams {
+  inletFilterMesh?: number;              // 入口过滤目数
+  flowRateRange?: { min: number; max: number; unit: 't/h' };
+  pressureMin?: ConditionValue;          // 最小压力（Bar）
+  polyphenolsRange?: { min: number; max: number; unit: 'mg/kg' };
+  brixRange?: { min: number; max: number; unit: 'Brix' };
+  pHRange?: { min: number; max: number; unit: 'pH' };
+  turbidityMax?: number;                 // 最大浊度（NTU）
+  targetFinalPolyphenols?: number;       // 目标最终茶多酚
+}
+
+// 冷却参数
+interface CoolingParams {
+  targetTempMax: number;                 // 目标最高温度（℃）
+  method?: string;                       // 冷却方式/注意事项
+}
+
+// 暂存参数
+interface HoldingParams {
+  settlingTime?: number;                 // 静置时间（min）
+  outletFilterMesh?: number;             // 出口过滤目数
+  container?: string;                    // 容器名称
+}
+
+// 膜过滤参数
+interface MembraneFiltrationParams {
+  membraneMaterial?: 'PES' | '其他';     // 膜材料
+  poreSize?: number;                     // 孔径（μm）
+  polyphenolsRange?: { min: number; max: number; unit: 'mg/kg' };
+  brixRange?: { min: number; max: number; unit: 'Brix' };
+  pHRange?: { min: number; max: number; unit: 'pH' };
+  turbidityMax?: number;                 // 最大浊度（NTU）
+  endDeltaP?: number;                    // 终点压差（MPa）
+  maxInletPressure?: number;             // 最大进口压力（MPa）
+  firstBatchFlushRequired?: '是' | '否'; // 首桶赶水要求
+  flushNote?: string;                    // 赶水说明
+}
+
+// UHT灭菌参数
+interface UhtParams {
+  sterilizationTemp?: { value: number; tolerance: number; unit: '℃' };
+  sterilizationTime?: { value: number; unit: 's' };
+  coolingTempMax?: number;               // 冷却后最高温度（℃）
+}
+
+// 灌装参数
+interface FillingParams {
+  fillingMethod?: string;                // 灌装方式
+  fillingVolume?: { value: number; unit: 'mL' | 'L' };
+}
+
+// 磁棒吸附参数
+interface MagneticAbsorptionParams {
+  purpose?: string;                      // 处理目的
+}
+
+// 无菌罐参数
+interface AsepticTankParams {
+  holdingTime?: number;                  // 暂存时间（min）
+  container?: string;                    // 容器名称
+}
 ```
 
 #### RecipeEdge（连线定义）

@@ -48,6 +48,7 @@ export function CompoundingFeedStepsEditor({
     feedSteps.length > 0 ? 0 : null
   );
   const [localSteps, setLocalSteps] = useState<CompoundingFeedStep[]>(feedSteps);
+  const [addStepKind, setAddStepKind] = useState<string>('');
 
   // 关键：当父组件异步初始化/更新 feedSteps 时，同步到本地 state
   // 否则首次打开弹窗会先渲染空数组，切换 Tab 触发重挂载后才显示。
@@ -117,6 +118,11 @@ export function CompoundingFeedStepsEditor({
   };
 
   const handleAddStep = (kind: 'water' | 'fromProcess' | 'stir' | 'manual') => {
+    // 计算已使用的前序工艺段 ID
+    const usedProcessIds = localSteps
+      .filter((s): s is CompoundingFeedStepFromProcess => s.kind === 'fromProcess')
+      .map(s => s.sourceProcessId);
+
     let newStep: CompoundingFeedStep;
 
     switch (kind) {
@@ -128,14 +134,21 @@ export function CompoundingFeedStepsEditor({
         } as CompoundingFeedStepWater;
         break;
       case 'fromProcess':
-        if (availableProcesses.length === 0) {
-          // 如果没有可用工艺段，提示用户
-          alert('当前没有可用的前序工艺段');
+        // 计算未使用的前序工艺段
+        const unusedProcesses = availableProcesses.filter(
+          p => !usedProcessIds.includes(p.id)
+        );
+        
+        if (unusedProcesses.length === 0) {
+          // 如果所有前序工艺段都已被引用，提示用户
+          alert('所有前序工艺段都已被引用，请先删除已有的"引用前序工艺段"步骤后再添加');
+          setAddStepKind(''); // 重置 Select
           return;
         }
+        
         newStep = {
           kind: 'fromProcess',
-          sourceProcessId: availableProcesses[0]?.id || '',
+          sourceProcessId: unusedProcesses[0]?.id || '',
           name: '',
         } as CompoundingFeedStepFromProcess;
         break;
@@ -155,9 +168,13 @@ export function CompoundingFeedStepsEditor({
         break;
     }
 
-    const newSteps = [...localSteps, newStep];
+    // 插入到选中步骤的下方，如果未选中则追加到末尾
+    const insertIndex = selectedIndex === null ? localSteps.length : selectedIndex + 1;
+    const newSteps = [...localSteps];
+    newSteps.splice(insertIndex, 0, newStep);
     handleStepsChange(newSteps);
-    setSelectedIndex(newSteps.length - 1);
+    setSelectedIndex(insertIndex);
+    setAddStepKind(''); // 重置 Select，允许重复添加同类型
   };
 
   const handleDeleteStep = (index: number) => {
@@ -201,16 +218,36 @@ export function CompoundingFeedStepsEditor({
         <h4 className="text-sm font-medium">进料顺序</h4>
         <div className="flex items-center gap-2">
           <Select
-            onValueChange={(value) =>
-              handleAddStep(value as 'water' | 'fromProcess' | 'stir' | 'manual')
-            }
+            value={addStepKind}
+            onValueChange={(value) => {
+              setAddStepKind(value);
+              handleAddStep(value as 'water' | 'fromProcess' | 'stir' | 'manual');
+            }}
           >
             <SelectTrigger className="w-[140px]">
               <SelectValue placeholder="添加步骤" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="water">加水</SelectItem>
-              <SelectItem value="fromProcess">引用前序工艺段</SelectItem>
+              <SelectItem 
+                value="fromProcess"
+                disabled={
+                  availableProcesses.filter(
+                    p => !localSteps
+                      .filter((s): s is CompoundingFeedStepFromProcess => s.kind === 'fromProcess')
+                      .map(s => s.sourceProcessId)
+                      .includes(p.id)
+                  ).length === 0
+                }
+              >
+                引用前序工艺段
+                {availableProcesses.filter(
+                  p => !localSteps
+                    .filter((s): s is CompoundingFeedStepFromProcess => s.kind === 'fromProcess')
+                    .map(s => s.sourceProcessId)
+                    .includes(p.id)
+                ).length === 0 && ' (无可用)'}
+              </SelectItem>
               <SelectItem value="stir">搅拌</SelectItem>
               <SelectItem value="manual">手动步骤</SelectItem>
             </SelectContent>
